@@ -250,12 +250,15 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = ProBrowse/ProBrowse.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 260;
-				ENABLE_APP_SANDBOX = NO;
+				CURRENT_PROJECT_VERSION = 80;
+				DEVELOPMENT_TEAM = ZFE2VJD462;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = RetroBrowse;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Walter Tengler";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -266,7 +269,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/ProBrowse/cp2_1.1.1_osx-x64_sc",
 				);
-				MARKETING_VERSION = 2.6;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = portwally.ProBrowse;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -286,12 +289,15 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = ProBrowse/ProBrowse.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 260;
-				ENABLE_APP_SANDBOX = NO;
+				CURRENT_PROJECT_VERSION = 80;
+				DEVELOPMENT_TEAM = ZFE2VJD462;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = RetroBrowse;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Walter Tengler";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -302,7 +308,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/ProBrowse/cp2_1.1.1_osx-x64_sc",
 				);
-				MARKETING_VERSION = 2.6;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = portwally.ProBrowse;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
