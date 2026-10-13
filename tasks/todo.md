@@ -186,3 +186,17 @@ Found and fixed during the test:
 - The picture inspector labelled every Super Hi-Res picture "320x200". It now shows the decoded size. This label change was built but not looked at again in the app.
 
 Not exercised: drag and drop between panes, dropping files from Finder, the Create Image sheet, Merlin and AppleWorks viewers in the app, and Cmd-click multi-selection (the automated click did not deliver the modifier, so this says nothing about real use).
+
+## Review — sandbox test (2026-10-13)
+
+An ad-hoc signed build with the App Sandbox entitlements was run (the process was confirmed sandboxed) and driven by hand on throwaway images.
+
+Found and fixed:
+
+- **Every write failed** with "Could not read disk image": access to the picked file was given back right after loading. The pane now holds that access for as long as the image is open (`DiskPaneViewModel.loadDiskImage`).
+- **Export did nothing and said nothing.** Writing to Downloads needs its own entitlement; `com.apple.security.files.downloads.read-write` was added to `ProBrowse.entitlements`, and export failures now show an alert.
+- **Exported text files were named `.bin`.** The extension table used DOS 3.3 type codes; it now uses ProDOS types.
+
+Worked in the sandbox after the fixes: opening images, cut/paste between two images, copying a DOS 3.3 file to ProDOS, New Folder, Delete with confirmation, Export to Downloads, and creating a new `.2mg` through the save panel.
+
+Not exercised in the sandbox: drag and drop between panes and from Finder, opening an archive, and a build signed with the real team identity (the test used ad-hoc signing).

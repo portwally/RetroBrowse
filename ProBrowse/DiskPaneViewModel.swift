@@ -93,13 +93,34 @@ class DiskPaneViewModel: ObservableObject {
                                      "shk", "sdk", "bxy", "bny", "bqy", "bii", "gz", "zip"]
     
     func loadDiskImage(from url: URL) {
-        guard url.startAccessingSecurityScopedResource() else {
-            print("Failed to access security scoped resource")
-            return
+        // In the sandbox, access to a file the user picked ends when it is given back.
+        // The writers reopen the image long after loading, so access is held for as long
+        // as the image stays open and only given back when another image replaces it.
+        let isAlreadyHeld = (url == securityScopedURL)
+        let startedAccess = isAlreadyHeld ? false : url.startAccessingSecurityScopedResource()
+        didFinishLoading = false
+        
+        readDiskImage(from: url)
+        
+        if didFinishLoading && !isAlreadyHeld {
+            securityScopedURL?.stopAccessingSecurityScopedResource()
+            securityScopedURL = startedAccess ? url : nil
+        } else if startedAccess {
+            url.stopAccessingSecurityScopedResource()
         }
-
-        defer { url.stopAccessingSecurityScopedResource() }
-
+    }
+    
+    /// The image whose sandbox access this pane is holding open
+    private var securityScopedURL: URL?
+    
+    /// Set by `finishLoading`, so `loadDiskImage` knows whether the pane adopted the file
+    private var didFinishLoading = false
+    
+    deinit {
+        securityScopedURL?.stopAccessingSecurityScopedResource()
+    }
+    
+    private func readDiskImage(from url: URL) {
         do {
             var originalData = try Data(contentsOf: url)
             var extractedFromArchive = false
@@ -347,6 +368,7 @@ class DiskPaneViewModel: ObservableObject {
         // Stay in the same directory when the same image is reloaded after a change
         let openPath = (url == diskImagePath) ? currentDirectory?.directoryPath : nil
         
+        didFinishLoading = true
         diskImagePath = url
         catalog = newCatalog
         self.isArchiveBacked = isArchiveBacked
@@ -708,7 +730,7 @@ class DiskPaneViewModel: ObservableObject {
     // MARK: - Export to Finder
     
     func exportSelectedToFinder() {
-        let entriesToExport = getSelectedEntries()  // Include directories!
+        let entriesToExport = topLevelEntries(getSelectedEntries())  // Include directories!
         
         guard !entriesToExport.isEmpty else { return }
         
@@ -732,21 +754,24 @@ class DiskPaneViewModel: ObservableObject {
             try FileManager.default.createDirectory(at: exportFolder, withIntermediateDirectories: true)
             
             var exportedCount = 0
+            var failures: [String] = []
             for entry in entriesToExport {
-                exportedCount += exportEntry(entry, to: exportFolder)
+                exportedCount += exportEntry(entry, to: exportFolder, failures: &failures)
             }
             
             print("🎉 Export completed: \(exportedCount) files")
             NSWorkspace.shared.activateFileViewerSelecting([exportFolder])
+            reportFailures("Some Items Could Not Be Exported", failures)
             
         } catch {
             print("❌ Export error: \(error)")
+            showError("Export Failed", error.localizedDescription)
         }
     }
     
     // MARK: - Recursive Export Helper
     
-    private func exportEntry(_ entry: DiskCatalogEntry, to parentFolder: URL) -> Int {
+    private func exportEntry(_ entry: DiskCatalogEntry, to parentFolder: URL, failures: inout [String]) -> Int {
         var count = 0
         
         if entry.isDirectory {
@@ -759,11 +784,12 @@ class DiskPaneViewModel: ObservableObject {
                 // Recursively export children
                 if let children = entry.children {
                     for child in children {
-                        count += exportEntry(child, to: subfolderURL)
+                        count += exportEntry(child, to: subfolderURL, failures: &failures)
                     }
                 }
             } catch {
                 print("❌ Failed to create directory \(entry.name): \(error)")
+                failures.append("\(entry.name): \(error.localizedDescription)")
             }
         } else {
             // Export file
@@ -772,9 +798,9 @@ class DiskPaneViewModel: ObservableObject {
             // Add extension if missing
             if !filename.contains(".") {
                 switch entry.fileType {
-                case 0x00, 0x01: filename += ".txt"
-                case 0x02: filename += ".bas"
-                case 0x04, 0x06: filename += ".bin"
+                // ProDOS file types (DOS 3.3 entries carry them too)
+                case 0x04: filename += ".txt"
+                case 0x06: filename += ".bin"
                 case 0xFA, 0xFC: filename += ".bas"
                 default: filename += ".dat"
                 }
@@ -787,6 +813,7 @@ class DiskPaneViewModel: ObservableObject {
                 count = 1
             } catch {
                 print("❌ Failed to export \(filename): \(error)")
+                failures.append("\(filename): \(error.localizedDescription)")
             }
         }
         
@@ -1115,6 +1142,8 @@ class DiskPaneViewModel: ObservableObject {
         diskImagePath = nil
         isArchiveBacked = false
         diskImageFileSize = nil
+        securityScopedURL?.stopAccessingSecurityScopedResource()
+        securityScopedURL = nil
         selectedEntries.removeAll()
         currentDirectory = nil
         navigationPath.removeAll()
