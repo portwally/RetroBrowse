@@ -16,6 +16,7 @@ All notable changes to ProBrowse will be documented in this file.
 - **Dates** - ProDOS years 2000-2039 and hour/minute order
 - **Viewers** - Screen dumps no longer mistaken for MacPaint; 640-mode APF pictures; Merlin columns; DOS 3.3 BASIC and binary files; monitor labels in the disassembler; AppleWorks characters and colors; Teach styles
 - **New .2mg images** now have a 2IMG header
+- **AppleWorks GS documents** are read in full, not just their first text block
 
 ### Added
 - **File archives are browsable** - ShrinkIt and Binary II archives without a disk image open as a read-only catalog
@@ -24,6 +25,9 @@ All notable changes to ProBrowse will be documented in this file.
 - **Multiple files** can be dropped from Finder at once
 - **Read-only protection** for images opened from inside an archive
 - **Tests** - `Tests/run-tests.sh`
+- **File menu** - Open in Left Pane, Open in Right Pane and Disk Image Info
+- **65C02 instructions** in the 6502 disassembler
+- **Subdirectories grow** when they fill up
 
 ### Changed
 - The disk writers never allocate a block or sector that a file already uses, even if the disk's own free map says it is free

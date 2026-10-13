@@ -27,6 +27,25 @@ struct ProBrowseApp: App {
                     )
                 }
                 .keyboardShortcut("n", modifiers: .command)
+
+                Divider()
+
+                Button("Open in Left Pane...") {
+                    NotificationCenter.default.post(name: .openDiskImage, object: PaneIdentifier.left)
+                }
+                .keyboardShortcut("o", modifiers: .command)
+
+                Button("Open in Right Pane...") {
+                    NotificationCenter.default.post(name: .openDiskImage, object: PaneIdentifier.right)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Disk Image Info...") {
+                    NotificationCenter.default.post(name: .showDiskImageInfo, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
             }
 
             CommandGroup(replacing: .help) {
@@ -60,4 +79,5 @@ extension NSNotification.Name {
     static let createDiskImage = NSNotification.Name("createDiskImage")
     static let openDiskImage = NSNotification.Name("openDiskImage")
     static let showHelp = NSNotification.Name("showHelp")
+    static let showDiskImageInfo = NSNotification.Name("showDiskImageInfo")
 }

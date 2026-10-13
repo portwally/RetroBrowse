@@ -13,12 +13,14 @@ struct ContentView: View {
     @StateObject private var leftPaneVM = DiskPaneViewModel()
     @StateObject private var rightPaneVM = DiskPaneViewModel()
     @State private var showingCreateImageSheet = false
-    @State private var showingInspectorSheet = false
     @State private var inspectorPane: PaneLocation? = nil
     @State private var keyboardMonitor: Any? = nil
+    @State private var hostWindow: NSWindow? = nil
     
-    enum PaneLocation {
+    enum PaneLocation: Identifiable {
         case left, right
+        
+        var id: Self { self }
     }
     
     var body: some View {
@@ -86,14 +88,24 @@ struct ContentView: View {
         .sheet(isPresented: $showingCreateImageSheet) {
             CreateImageSheet()
         }
-        .sheet(isPresented: $showingInspectorSheet) {
-            if let pane = inspectorPane {
-                let vm = pane == .left ? leftPaneVM : rightPaneVM
-                ImageInspectorSheet(viewModel: vm)
-            }
+        .sheet(item: $inspectorPane) { pane in
+            ImageInspectorSheet(viewModel: pane == .left ? leftPaneVM : rightPaneVM)
         }
+        .background(WindowReader { window in
+            if hostWindow !== window { hostWindow = window }
+        })
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.createDiskImage)) { _ in
             showingCreateImageSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openDiskImage)) { notification in
+            if notification.object as? PaneIdentifier == .right {
+                rightPaneVM.showingFilePicker = true
+            } else {
+                leftPaneVM.showingFilePicker = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showDiskImageInfo)) { _ in
+            inspectorPane = FocusManager.shared.activePaneId == .left ? .left : .right
         }
         .onDisappear {
             if let monitor = keyboardMonitor {
@@ -106,9 +118,9 @@ struct ContentView: View {
             if keyboardMonitor != nil { return }
             // Setup keyboard shortcuts
             keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                // Leave the keys alone while a sheet, alert or other window is in front,
+                // Leave the keys alone while a sheet, alert or other window (Help) is in front,
                 // or while text is being edited, so they keep their normal meaning there
-                guard let window = event.window,
+                guard let window = event.window, window === hostWindow,
                       window.sheetParent == nil, window.attachedSheet == nil,
                       NSApp.modalWindow == nil,
                       !(window.firstResponder is NSText) else {
@@ -121,11 +133,6 @@ struct ContentView: View {
                 // Delete and forward delete remove the selection (after confirmation)
                 if modifiers.isEmpty && (event.keyCode == 51 || event.keyCode == 117) && !activeVM.selectedEntries.isEmpty {
                     activeVM.deleteSelected()
-                    return nil
-                }
-                
-                if modifiers == [.command, .shift] && event.charactersIgnoringModifiers?.lowercased() == "o" {
-                    rightPaneVM.showingFilePicker = true
                     return nil
                 }
                 
@@ -143,9 +150,6 @@ struct ContentView: View {
                     case "i":
                         activeVM.inspectSelectedFile()
                         return nil
-                    case "o":
-                        leftPaneVM.showingFilePicker = true
-                        return nil
                     default:
                         break
                     }
@@ -153,6 +157,23 @@ struct ContentView: View {
                 return event
             }
         }
+    }
+}
+
+// MARK: - Window Reader
+
+/// Reports the window that hosts a view
+private struct WindowReader: NSViewRepresentable {
+    let onChange: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onChange(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onChange(nsView.window) }
     }
 }
 

@@ -46,11 +46,11 @@ Paths are relative to `ProBrowse/`. "VM" is `DiskPaneViewModel.swift`.
 - [x] **Finder-made zips cannot be read** — `GzipZipArchive.swift:172-177`. Data-descriptor zips have zero sizes in the local header. Fix: parse the central directory. [run]
 - [x] **Binary II header layout wrong** — `BinaryIIArchive.swift:96-108`. EOF is 3 bytes at +20, name length at +23. [run against a spec-built header; no real `.bny`]
 - [x] **Archives and `.vol` cannot be opened from the UI** — `DiskBrowserPane.swift:52`, `455`, `495`. Dropping one imports it into the open disk as a BIN file. [read]
-- [ ] **App-wide key monitor swallows Cmd+C/X/V/I** — `ContentView.swift:108-139`. Text fields cannot copy or paste, and Cmd+V behind a sheet writes to disk. [read] **Partly done: the monitor now ignores keys while a sheet, alert or text field is active and requires exactly Cmd. Still an event monitor rather than menu commands.**
+- [x] **App-wide key monitor swallows Cmd+C/X/V/I** — `ContentView.swift:108-139`. Text fields cannot copy or paste, and Cmd+V behind a sheet writes to disk. [read]
 - [x] **"Create Image" as `.2mg` writes no 2IMG header** — `CreateImageSheet.swift:250`, `ProDOSWriter.swift:1306-1334`. [read]
 - [x] **DOS 3.3 files are interpreted with ProDOS type codes** — `FileInspectorSheet.swift:365-432`, `540-607`. BASIC is never detokenized; binaries show as text. DOS files also carry no header handling on copy (`DOS33Writer.swift:500-518`). [read]
 - [x] **DOS 3.3 name handling** — names truncated at the first space (`DiskImageParser.swift:700`); `fileExists` can never match (`DOS33Writer.swift:668`); the lock emoji is stored in `entry.name` (`DiskImageParser.swift:740`). [read]
-- [ ] **Disk Image Inspector / Verify is unreachable** — `ContentView.swift:16-17`, `89-94`. [read]
+- [x] **Disk Image Inspector / Verify is unreachable** — `ContentView.swift:16-17`, `89-94`. [read]
 - [x] **Delete key, Cmd+O and Cmd+Shift+O are advertised but not wired** — `CatalogEntryRow.swift:265`, `ContentView.swift:176`, `293`. [read]
 
 ## 4. Wrong output
@@ -62,8 +62,8 @@ Paths are relative to `ProBrowse/`. "VM" is `DiskPaneViewModel.swift`.
 - [x] **640-mode APF decoded as 320 mode** — `AppleIIGraphicsDecoder.swift:722`, `798`, `855`. [read]
 - [x] **Merlin viewer shifts columns on unlabelled lines** — `MerlinView.swift:94-148`. [run]
 - [x] **Teach resource map parsed with the wrong layout** — `TeachDecoder.swift:143-176`. [likely]
-- [ ] **AppleWorks** — tab-ruler records desynchronise the WP parse (`AppleWorksDecoder.swift:340-344`) [likely]; AWGS red and blue swapped (`:540-542`) [read]; only the first AWGS text block parsed (`:628-672`) [likely]; high-bit characters mapped to control codes (`:451-468`) [read]. **Partly done: record stepping, the AppleWorks 3 header bytes, inverse characters and the AWGS palette are fixed. Only the first AWGS text block is read.**
-- [ ] **6502 disassembler** — a dozen wrong monitor labels (`Disassembler6502.swift:363-437`); no 65C02 opcodes. [read] **Partly done: labels corrected. 65C02 opcodes are still shown as `???`.**
+- [x] **AppleWorks** — tab-ruler records desynchronise the WP parse (`AppleWorksDecoder.swift:340-344`) [likely]; AWGS red and blue swapped (`:540-542`) [read]; only the first AWGS text block parsed (`:628-672`) [likely]; high-bit characters mapped to control codes (`:451-468`) [read].
+- [x] **6502 disassembler** — a dozen wrong monitor labels (`Disassembler6502.swift:363-437`); no 65C02 opcodes. [read]
 - [x] **65816 "Native Mode" toggle has no effect** — `Disassembler65816.swift:476-480`, `502-507`. [read]
 - [x] **File type labels** — `$C0`/`$C1` swapped, `$B0` wrong (`FileInfoSheet.swift:137-139`). [read]
 - [x] **Teach / AWGS styled paragraphs render as side-by-side columns** — `TeachView.swift:74-82`, `AppleWorksView.swift:89-97`. [read]
@@ -71,19 +71,19 @@ Paths are relative to `ProBrowse/`. "VM" is `DiskPaneViewModel.swift`.
 ## 5. Smaller issues
 
 - [x] Multi-file Finder drop imports only the first file, always as BIN — `DiskBrowserPane.swift:439-466`. [read]
-- [ ] Drag exports the selection, not the dragged row; self-drops are accepted — `DiskBrowserPane.swift:341-354`. [read] **Partly done: a drop onto the image the drag came from is ignored, and a drag with nothing selected takes the row. With a selection, the selection is still what is dragged.**
+- [x] Drag exports the selection, not the dragged row; self-drops are accepted — `DiskBrowserPane.swift:341-354`. [read]
 - [x] Shift-click selects hidden children of collapsed folders; selecting a folder plus its children copies the children twice — VM `408-426`, `517-529`. [read]
 - [x] Paste, drag-copy and import always land in the volume root; every reload returns to root — VM `855`, `776`, `640`, `97`. [read]
 - [x] Navigating into a nested folder from the expanded tree records the wrong path — VM `473-488`. [read]
 - [x] Header "Size" reads the whole image on every view update — `DiskBrowserPane.swift:131`. [read]
 - [x] Non-ASCII names pass validation — `CreateImageSheet.swift:22-46`, `ProDOSWriter.swift:147-151`. [read]
-- [ ] No duplicate-name check in `createDirectory`; directories never grow past one block; renaming a directory leaves its header name stale — `ProDOSWriter.swift:1000-1050`, `468-496`, `1264-1285`. [read] **Partly done: duplicate check and directory-header rename are in. Directories still cannot grow past one block.**
+- [x] No duplicate-name check in `createDirectory`; directories never grow past one block; renaming a directory leaves its header name stale — `ProDOSWriter.swift:1000-1050`, `468-496`, `1264-1285`. [read]
 - [x] Bitmap location hard-coded to block 6 — `ProDOSWriter.swift:524`, `955`. [read]
 - [x] DOS 3.3 allocator can hand out track 0; catalog sector count omits T/S list sectors — `DOS33Writer.swift:228-236`, `567`. [likely / read]
 - [x] Decompression size limits missing — `NuFXArchive.swift:464-498`, `GzipZipArchive.swift:100`, `298`. [read]
-- [ ] Most write failures are only printed, never shown to the user — VM throughout. [read] **Partly done: import, copy, paste, delete, rename, new folder and load failures now show an alert. Export failures are still only printed.**
-- [ ] Text viewer truncates at the first NUL and lays out the whole file in one `Text` — `FileInspectorSheet.swift:684-703`. [read] **Partly done: NULs no longer end the text. The whole file is still laid out in one `Text`.**
-- [ ] `NuFXWriter` and `BinaryIIWriter` are dead code with the same layout errors as the readers. [run / read] **Not changed: the code is still there and unused. The README no longer claims archive writing.**
+- [x] Most write failures are only printed, never shown to the user — VM throughout. [read]
+- [x] Text viewer truncates at the first NUL and lays out the whole file in one `Text` — `FileInspectorSheet.swift:684-703`. [read]
+- [x] `NuFXWriter` and `BinaryIIWriter` are dead code with the same layout errors as the readers. [run / read]
 - [x] Project: stale `LIBRARY_SEARCH_PATHS` entry; README says macOS 14 but the target is 15.7; version 2.6 has no CHANGELOG entry; ~20 unused-variable warnings. [read]
 
 ## Proposed order of work
@@ -94,7 +94,7 @@ Paths are relative to `ProBrowse/`. "VM" is `DiskPaneViewModel.swift`.
 4. NuFX, zip and Binary II readers.
 5. Wrong-output items, then the smaller issues.
 
-All five steps have been worked through (see Review). The items still unchecked above are what remains.
+All five steps are done and every item above is checked (see the Review sections).
 
 ## Review — steps 1 to 3 (2026-10-12)
 
@@ -220,3 +220,32 @@ Reported by the user: dragging one file out of an expanded folder showed the who
 Cause: the drag source was the top-level row, which contains the folder and every row shown inside it. Each row is now its own drag source (`CatalogEntryRow`), so the drag image is that row. A row that is not selected is now dragged on its own; a selected row still takes the whole selection.
 
 Checked in the running sandboxed build: dragging `README` out of an expanded `GAMES` folder shows only that row and copies only that file.
+
+## Review — remaining open items (2026-10-13)
+
+The nine items that were still open are closed. Nothing is committed.
+
+- **Key handling:** File menu commands for Open in Left Pane (Cmd+O), Open in Right Pane (Shift+Cmd+O) and Disk Image Info (Option+Cmd+I) replace the hand-rolled key checks for those. The key monitor now only acts on the main window, so Cmd+C in the Help window copies text again. Cut, copy, paste, inspect and Delete stay in the monitor: the panes are not AppKit responders, so the standard Edit menu cannot reach them.
+- **Disk Image Info** is reachable from the File menu. The sheet came up empty at first (its content read state that was set in the same update); it is now presented with the pane as its item. Verification no longer reads the view model off the main thread and accepts archives.
+- **AppleWorks GS:** every text block is read, paragraphs are found by block and offset, and page-break entries no longer inflate the ruler count. On 48 real documents the decoded text went from 30,743 to 359,362 characters, with no stray control characters; three documents that decoded to nothing now read.
+- **65C02:** the 27 added instructions and two addressing modes are decoded. Checked on a hand-assembled sequence.
+- **Subdirectories grow** a block at a time when full, and the parent entry's block count and size follow. The volume directory stays fixed at 51 entries.
+- **Text viewer** shows the text in lazily created pieces of 100 lines (see the next section; the first attempt, a 256 KB cap, was replaced).
+- **Unused `NuFXWriter` and `BinaryIIWriter`** are removed (about 700 lines). They produced invalid archives and nothing called them.
+- **Drag** and **write failures** were already closed by the two earlier commits.
+
+Verification: `Tests/run-tests.sh` passes 250 of 250 checks (new: a subdirectory growing to three blocks and being deleted, and the volume directory limit). In the running sandboxed build, Cmd+O opened the picker through the menu and Disk Image Info showed the volume and verified it.
+
+## Review — inspector and Help window check (2026-10-13)
+
+Looked at in the running sandboxed build, on a test image holding a 63 KB AppleWorks GS document, a short 65C02 routine and a 300 KB text file.
+
+- **AppleWorks GS:** the document displays from its first line to well past the first text block.
+- **65C02:** `BRA`, `STZ`, `LDA ($06)`, `JMP ($2000,X)`, `PHX`, `INC A`, `BIT #`, `PLX` are shown with their operands and labels.
+
+Found and fixed:
+
+- **Disassembly listing layout.** A short listing sat in a narrow column in the middle of the view, with three-byte instructions wrapping onto a second line. Both disassembler views now pin the listing to the top left and never wrap a row.
+- **Long text files went blank.** A single text view stops drawing after a few thousand lines, so most of a 300 KB file showed as empty space; the 256 KB cap did not help. The text is now shown in pieces of 100 lines that are created as they scroll into view, and the cap and its note are gone. Checked around line 3000, across a piece boundary.
+- **Help text could not be selected**, so Cmd+C had nothing to copy. Selection is now enabled; a selected line was copied to the clipboard and read back.
+

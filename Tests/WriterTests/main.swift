@@ -190,6 +190,39 @@ do {
     check(freeBlockCount(try! Data(contentsOf: url)) == free, "deleting a directory frees its contents")
 }
 
+// MARK: - ProDOS: subdirectories grow
+
+do {
+    let url = newProDOSImage("grow.po", size: "140KB")
+    let free = freeBlockCount(try! Data(contentsOf: url))
+    _ = wait { ProDOSWriter.shared.createDirectory(diskImagePath: url, directoryName: "BIG", parentPath: "/", completion: $0) }
+
+    // One block holds 12 entries beside the header; 30 files need three blocks
+    for index in 0..<30 {
+        check(add(url, "FILE\(index)", bytes(100 + index, seed: UInt8(index)), parent: "/BIG/").ok, "add file \(index) to /BIG")
+    }
+    _ = wait { ProDOSWriter.shared.createDirectory(diskImagePath: url, directoryName: "INNER", parentPath: "/BIG/", completion: $0) }
+
+    let cat = catalog(url)
+    check(find(cat, "/BIG")?.children?.count == 31, "all 31 entries are listed, got \(String(describing: find(cat, "/BIG")?.children?.count))")
+    check((0..<30).allSatisfy { find(cat, "/BIG/FILE\($0)")?.data == bytes(100 + $0, seed: UInt8($0)) }, "every file in the grown directory reads back")
+    check(find(cat, "/BIG")?.blocks == 3, "the parent entry counts three directory blocks, got \(String(describing: find(cat, "/BIG")?.blocks))")
+
+    let image = try! Data(contentsOf: url)
+    let key = find(cat, "/BIG")!.keyPointer!
+    check(Int(image[key * 512 + 0x25]) == 31, "the directory header counts 31 entries")
+
+    check(wait { ProDOSWriter.shared.deleteFile(diskImagePath: url, fileName: "BIG", parentPath: "/", completion: $0) }.ok, "delete the grown directory")
+    check(freeBlockCount(try! Data(contentsOf: url)) == free, "deleting it frees every directory block")
+
+    // The volume directory does not grow: 51 entries fit in its four blocks
+    for index in 0..<51 {
+        _ = add(url, "R\(index)", bytes(1, seed: 0))
+    }
+    check(!add(url, "ONEMORE", bytes(1, seed: 0)).ok, "the 52nd file in the volume directory is refused")
+    check(catalog(url)?.entries.count == 51, "the volume directory holds 51 entries")
+}
+
 // MARK: - ProDOS: DOS-ordered images
 
 do {

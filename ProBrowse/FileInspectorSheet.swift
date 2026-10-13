@@ -674,13 +674,36 @@ struct FileContentView: View {
 struct TextContentView: View {
     let data: Data
 
+    // The text in pieces of `linesPerChunk` lines each
+    @State private var chunks: [String] = []
+
     var body: some View {
         ScrollView {
-            Text(convertToText())
-                .font(.system(.body, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .textSelection(.enabled)
+            // One text view for a whole file stops drawing after a few thousand lines,
+            // so the text is shown in pieces that are created as they scroll into view
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(chunks.indices, id: \.self) { index in
+                    Text(chunks[index])
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding()
+        }
+        .onAppear {
+            if chunks.isEmpty {
+                chunks = Self.chunks(of: convertToText())
+            }
+        }
+    }
+
+    private static let linesPerChunk = 100
+
+    private static func chunks(of text: String) -> [String] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return stride(from: 0, to: lines.count, by: linesPerChunk).map { start in
+            lines[start..<min(start + linesPerChunk, lines.count)].joined(separator: "\n")
         }
     }
 

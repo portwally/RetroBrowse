@@ -499,6 +499,73 @@ guard let volume = self.locateVolume(Data(referencing: diskData)) else {
             }
         }
         
+        // A full subdirectory grows by one block. The volume directory has a fixed size.
+        guard dirBlock != VOLUME_DIR_BLOCK, let lastBlock = chain.last else { return nil }
+        return extendDirectory(diskData, keyBlock: dirBlock, lastBlock: lastBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+    }
+    
+    /// Adds a block to the end of a subdirectory and returns its first entry slot
+    private func extendDirectory(_ diskData: NSMutableData, keyBlock: Int, lastBlock: Int, dataOffset: Int, isDOSOrder: Bool) -> (block: Int, entryOffsetInBlock: Int)? {
+        guard let newBlock = allocateBlocks(diskData, count: 1, dataOffset: dataOffset, isDOSOrder: isDOSOrder)?.first,
+              var lastBlockData = readBlock(Data(referencing: diskData), blockIndex: lastBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else {
+            return nil
+        }
+        
+        // Link the new block behind the last one
+        var newBlockData = Data(repeating: 0, count: BLOCK_SIZE)
+        newBlockData[0] = UInt8(lastBlock & 0xFF)
+        newBlockData[1] = UInt8((lastBlock >> 8) & 0xFF)
+        lastBlockData[2] = UInt8(newBlock & 0xFF)
+        lastBlockData[3] = UInt8((newBlock >> 8) & 0xFF)
+        writeBlock(diskData, blockIndex: newBlock, blockData: newBlockData, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+        writeBlock(diskData, blockIndex: lastBlock, blockData: lastBlockData, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+        
+        // The directory's entry in its parent records its size
+        if let (entryBlock, entryOffset) = findParentEntry(Data(referencing: diskData), ofDirectory: keyBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder),
+           var entryBlockData = readBlock(Data(referencing: diskData), blockIndex: entryBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) {
+            let blocksUsed = (Int(entryBlockData[entryOffset + 0x13]) | (Int(entryBlockData[entryOffset + 0x14]) << 8)) + 1
+            let eof = (Int(entryBlockData[entryOffset + 0x15]) | (Int(entryBlockData[entryOffset + 0x16]) << 8) |
+                       (Int(entryBlockData[entryOffset + 0x17]) << 16)) + BLOCK_SIZE
+            entryBlockData[entryOffset + 0x13] = UInt8(blocksUsed & 0xFF)
+            entryBlockData[entryOffset + 0x14] = UInt8((blocksUsed >> 8) & 0xFF)
+            entryBlockData[entryOffset + 0x15] = UInt8(eof & 0xFF)
+            entryBlockData[entryOffset + 0x16] = UInt8((eof >> 8) & 0xFF)
+            entryBlockData[entryOffset + 0x17] = UInt8((eof >> 16) & 0xFF)
+            writeBlock(diskData, blockIndex: entryBlock, blockData: entryBlockData, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+        }
+        
+        return (newBlock, 4)
+    }
+    
+    /// Finds the entry that describes a subdirectory in its parent directory.
+    /// The header's parent pointer names a block of the parent; which block, and the entry
+    /// number beside it, are not relied on, because older images have them wrong.
+    private func findParentEntry(_ diskData: Data, ofDirectory keyBlock: Int, dataOffset: Int, isDOSOrder: Bool) -> (block: Int, entryOffsetInBlock: Int)? {
+        guard let header = readBlock(diskData, blockIndex: keyBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else { return nil }
+        
+        // Walk back to the parent's key block
+        var parentKeyBlock = Int(header[0x27]) | (Int(header[0x28]) << 8)
+        var visited = Set<Int>()
+        while parentKeyBlock != 0, visited.insert(parentKeyBlock).inserted,
+              let blockData = readBlock(diskData, blockIndex: parentKeyBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) {
+            let previous = Int(blockData[0]) | (Int(blockData[1]) << 8)
+            if previous == 0 { break }
+            parentKeyBlock = previous
+        }
+        
+        let chain = directoryChain(diskData, keyBlock: parentKeyBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+        for (chainIndex, block) in chain.enumerated() {
+            guard let blockData = readBlock(diskData, blockIndex: block, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else { continue }
+            
+            for entryIndex in (chainIndex == 0 ? 1 : 0)..<ENTRIES_PER_BLOCK {
+                let entryOffset = 4 + (entryIndex * ENTRY_LENGTH)
+                let entryKey = Int(blockData[entryOffset + 0x11]) | (Int(blockData[entryOffset + 0x12]) << 8)
+                if blockData[entryOffset] >> 4 == 0xD && entryKey == keyBlock {
+                    return (block, entryOffset)
+                }
+            }
+        }
+        
         return nil
     }
     

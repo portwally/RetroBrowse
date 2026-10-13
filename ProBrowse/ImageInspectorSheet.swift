@@ -105,8 +105,12 @@ struct ImageInspectorSheet: View {
         isVerifying = true
         verificationResult = nil
 
+        // The view model belongs to the main thread; take what the check needs before leaving it
+        let catalog = viewModel.catalog
+        let isArchive = viewModel.isArchiveBacked
+
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = verifyDiskImage(at: imagePath)
+            let result = verifyDiskImage(at: imagePath, catalog: catalog, isArchive: isArchive)
             DispatchQueue.main.async {
                 isVerifying = false
                 verificationResult = result
@@ -115,7 +119,7 @@ struct ImageInspectorSheet: View {
     }
 
     /// Native disk image verification
-    private func verifyDiskImage(at url: URL) -> String {
+    private func verifyDiskImage(at url: URL, catalog: DiskCatalog?, isArchive: Bool) -> String {
         // Check 1: File exists and is readable
         guard FileManager.default.fileExists(atPath: url.path) else {
             return "❌ File not found"
@@ -141,8 +145,11 @@ struct ImageInspectorSheet: View {
         var sizeValid = false
         var sizeDescription = ""
 
-        // Check exact sizes first
-        if let desc = validSizes[data.count] {
+        // An archive is as large as its compressed contents; only the image inside has a fixed size
+        if isArchive {
+            sizeValid = true
+            sizeDescription = "archive, \(formatBytes(data.count))"
+        } else if let desc = validSizes[data.count] {
             sizeValid = true
             sizeDescription = desc
         } else {
@@ -172,16 +179,12 @@ struct ImageInspectorSheet: View {
         // Check 4: Validate format-specific structure
         var formatChecks: [String] = []
 
-        // Skip 2IMG header if present
-        var actualData = data
         if data.count >= 64 && data.prefix(4) == Data([0x32, 0x49, 0x4D, 0x47]) {
-            let headerSize = Int(data[8]) | (Int(data[9]) << 8)
-            actualData = data.subdata(in: headerSize..<data.count)
-            formatChecks.append("2IMG header valid")
+            formatChecks.append("2IMG header present")
         }
 
         // Check for ProDOS volume header
-        if let catalog = viewModel.catalog {
+        if let catalog = catalog {
             if catalog.diskFormat.contains("ProDOS") {
                 formatChecks.append("ProDOS volume detected: \(catalog.diskName)")
                 formatChecks.append("Format: \(catalog.diskFormat)")

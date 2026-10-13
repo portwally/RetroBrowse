@@ -58,6 +58,8 @@ struct HelpWindow: View {
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Help text can be selected and copied
+                .textSelection(.enabled)
             }
         }
         .frame(width: 700, height: 500)

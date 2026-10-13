@@ -587,6 +587,7 @@ class AppleWorksDecoder {
         // Read SaveArray entries (12 bytes each)
         var saveArrayEntries: [(textBlock: Int, textOffset: Int, rulerNum: Int, isPageBreak: Bool)] = []
         var maxRulerNum = 0
+        var maxTextBlock = 0
 
         for _ in 0..<saveArrayCount {
             guard offset + 12 <= data.count else { break }
@@ -601,8 +602,10 @@ class AppleWorksDecoder {
             let isPageBreak = (attributes == 1)
             saveArrayEntries.append((textBlock, textOffset, rulerNum, isPageBreak))
 
-            if rulerNum > maxRulerNum {
-                maxRulerNum = rulerNum
+            // A page break entry has no text and no ruler; its other fields are not meaningful
+            if !isPageBreak {
+                maxRulerNum = max(maxRulerNum, rulerNum)
+                maxTextBlock = max(maxTextBlock, textBlock)
             }
         }
 
@@ -624,29 +627,23 @@ class AppleWorksDecoder {
             rulers.append((isCentered, isRightJust, isFullJust))
         }
 
-        // Read text blocks
+        // Read text blocks. Each is a 4-byte size followed by the block, which starts with its
+        // own size and used count (2 bytes each); paragraph offsets count from the block start.
+        var textBlocks: [(start: Int, end: Int)] = []
+        for _ in 0...maxTextBlock {
+            guard offset + 4 <= data.count else { break }
+            let blockSize = Int(readDWord(data, at: offset))
+            let blockStart = offset + 4
+            guard blockSize >= 4, blockStart + blockSize <= data.count else { break }
+            textBlocks.append((blockStart, blockStart + blockSize))
+            offset = blockStart + blockSize
+        }
+
         var lines: [AWPLine] = []
         var plainTextLines: [String] = []
 
-        // Read text block header
-        guard offset + 8 <= data.count else { return (lines, plainTextLines) }
-
-        let textBlockLength = Int(readDWord(data, at: offset))
-        offset += 8  // Skip the 8-byte header
-
-        guard textBlockLength > 0 && offset + textBlockLength <= data.count else {
-            return (lines, plainTextLines)
-        }
-
-        let textBlockEnd = offset + textBlockLength
-
-        // Parse paragraphs from text block
-        var paragraphIndex = 0
-
-        while offset < textBlockEnd && paragraphIndex < saveArrayEntries.count {
-            let entry = saveArrayEntries[paragraphIndex]
-
-            // Check for page break
+        // Each SaveArray entry names its paragraph by text block and offset
+        for entry in saveArrayEntries {
             if entry.isPageBreak {
                 let pageBreak = AWPLine(
                     runs: [AWPTextRun(text: "--- Page Break ---", isBold: false, isItalic: false,
@@ -655,24 +652,24 @@ class AppleWorksDecoder {
                 )
                 lines.append(pageBreak)
                 plainTextLines.append("")
-                paragraphIndex += 1
                 continue
             }
+
+            guard entry.textBlock < textBlocks.count else { continue }
+            let block = textBlocks[entry.textBlock]
+            var paragraphOffset = block.start + entry.textOffset
 
             // Get ruler info for this paragraph
             let rulerNum = entry.rulerNum
             let ruler = rulerNum < rulers.count ? rulers[rulerNum] : (isCentered: false, isRightJust: false, isFullJust: false)
 
-            // Parse paragraph
-            if let (line, plainText) = parseGWPParagraph(data: data, offset: &offset, endOffset: textBlockEnd,
+            if let (line, plainText) = parseGWPParagraph(data: data, offset: &paragraphOffset, endOffset: block.end,
                                                          isCentered: ruler.0,
                                                          isRightJustified: ruler.1,
                                                          isFullyJustified: ruler.2) {
                 lines.append(line)
                 plainTextLines.append(plainText)
             }
-
-            paragraphIndex += 1
         }
 
         return (lines, plainTextLines)

@@ -814,13 +814,18 @@ struct Disassembly65816View: View {
             Divider()
 
             // Disassembly listing
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(instructions.enumerated()), id: \.offset) { _, instr in
-                        Disassembly65816LineView(instruction: instr)
+            // A two-axis scroll view centres content smaller than itself, so the listing
+            // is given at least the visible size and pinned to the top left
+            GeometryReader { geometry in
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(instructions.enumerated()), id: \.offset) { _, instr in
+                            Disassembly65816LineView(instruction: instr)
+                        }
                     }
+                    .padding(12)
+                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .topLeading)
                 }
-                .padding(12)
             }
             .font(.system(size: 12, design: .monospaced))
             .background(Color(NSColor.textBackgroundColor))
@@ -894,9 +899,8 @@ struct Disassembly65816LineView: View {
                     .foregroundColor(commentColor)
             }
 
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize()
     }
 }
 

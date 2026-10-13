@@ -24,6 +24,8 @@ enum AddressMode6502 {
     case indexedIndirect // ($nn,X) - Indexed indirect
     case indirectIndexed // ($nn),Y - Indirect indexed
     case relative       // Branch offset (signed 8-bit)
+    case zeroPageIndirect        // ($nn) - 65C02
+    case absoluteIndexedIndirect // ($nnnn,X) - 65C02 (JMP only)
     case invalid        // Invalid/undocumented opcode
 }
 
@@ -68,8 +70,49 @@ struct DisassembledInstruction {
 
 class Disassembler6502 {
 
+    /// The opcode table used for disassembly: the 6502 plus the 65C02 additions.
+    /// The 65C02 opcodes sit in slots the 6502 leaves undefined, so one table serves both.
+    static let opcodes: [Opcode6502] = {
+        var table = nmosOpcodes
+        for (opcode, definition) in cmosOpcodes {
+            table[opcode] = definition
+        }
+        return table
+    }()
+
+    // Instructions the 65C02 (Apple IIc, enhanced IIe) adds to the 6502
+    private static let cmosOpcodes: [Int: Opcode6502] = [
+        0x04: Opcode6502("TSB", .zeroPage, 2, 5),
+        0x0C: Opcode6502("TSB", .absolute, 3, 6),
+        0x12: Opcode6502("ORA", .zeroPageIndirect, 2, 5),
+        0x14: Opcode6502("TRB", .zeroPage, 2, 5),
+        0x1A: Opcode6502("INC", .accumulator, 1, 2),
+        0x1C: Opcode6502("TRB", .absolute, 3, 6),
+        0x32: Opcode6502("AND", .zeroPageIndirect, 2, 5),
+        0x34: Opcode6502("BIT", .zeroPageX, 2, 4),
+        0x3A: Opcode6502("DEC", .accumulator, 1, 2),
+        0x3C: Opcode6502("BIT", .absoluteX, 3, 4),
+        0x52: Opcode6502("EOR", .zeroPageIndirect, 2, 5),
+        0x5A: Opcode6502("PHY", .implied, 1, 3),
+        0x64: Opcode6502("STZ", .zeroPage, 2, 3),
+        0x72: Opcode6502("ADC", .zeroPageIndirect, 2, 5),
+        0x74: Opcode6502("STZ", .zeroPageX, 2, 4),
+        0x7A: Opcode6502("PLY", .implied, 1, 4),
+        0x7C: Opcode6502("JMP", .absoluteIndexedIndirect, 3, 6),
+        0x80: Opcode6502("BRA", .relative, 2, 3),
+        0x89: Opcode6502("BIT", .immediate, 2, 2),
+        0x92: Opcode6502("STA", .zeroPageIndirect, 2, 5),
+        0x9C: Opcode6502("STZ", .absolute, 3, 4),
+        0x9E: Opcode6502("STZ", .absoluteX, 3, 5),
+        0xB2: Opcode6502("LDA", .zeroPageIndirect, 2, 5),
+        0xD2: Opcode6502("CMP", .zeroPageIndirect, 2, 5),
+        0xDA: Opcode6502("PHX", .implied, 1, 3),
+        0xF2: Opcode6502("SBC", .zeroPageIndirect, 2, 5),
+        0xFA: Opcode6502("PLX", .implied, 1, 4),
+    ]
+
     // Complete 6502 opcode table (256 entries)
-    static let opcodes: [Opcode6502] = [
+    private static let nmosOpcodes: [Opcode6502] = [
         // $00-$0F
         Opcode6502("BRK", .implied, 1, 7),
         Opcode6502("ORA", .indexedIndirect, 2, 6),
@@ -546,6 +589,13 @@ class Disassembler6502 {
             let offset = Int8(bitPattern: bytes[1])
             let target = Int(address) + 2 + Int(offset)
             return String(format: "$%04X", UInt16(truncatingIfNeeded: target))
+        case .zeroPageIndirect:
+            guard bytes.count >= 2 else { return "($??)" }
+            return String(format: "($%02X)", bytes[1])
+        case .absoluteIndexedIndirect:
+            guard bytes.count >= 3 else { return "($????,X)" }
+            let addr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
+            return String(format: "($%04X,X)", addr)
         case .invalid:
             return ""
         }
@@ -560,11 +610,11 @@ class Disassembler6502 {
             if bytes.count >= 3 {
                 targetAddr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
             }
-        case .indirect:
+        case .indirect, .absoluteIndexedIndirect:
             if bytes.count >= 3 {
                 targetAddr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
             }
-        case .zeroPage, .zeroPageX, .zeroPageY, .indexedIndirect, .indirectIndexed:
+        case .zeroPage, .zeroPageX, .zeroPageY, .indexedIndirect, .indirectIndexed, .zeroPageIndirect:
             if bytes.count >= 2 {
                 targetAddr = UInt16(bytes[1])
             }
@@ -630,13 +680,18 @@ struct DisassemblyView: View {
             Divider()
 
             // Disassembly listing
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(instructions.enumerated()), id: \.offset) { _, instr in
-                        DisassemblyLineView(instruction: instr)
+            // A two-axis scroll view centres content smaller than itself, so the listing
+            // is given at least the visible size and pinned to the top left
+            GeometryReader { geometry in
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(instructions.enumerated()), id: \.offset) { _, instr in
+                            DisassemblyLineView(instruction: instr)
+                        }
                     }
+                    .padding(12)
+                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .topLeading)
                 }
-                .padding(12)
             }
             .font(.system(size: 12, design: .monospaced))
             .background(Color(NSColor.textBackgroundColor))
@@ -706,9 +761,8 @@ struct DisassemblyLineView: View {
                     .foregroundColor(commentColor)
             }
 
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize()
     }
 }
 
