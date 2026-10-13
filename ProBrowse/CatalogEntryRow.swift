@@ -21,13 +21,14 @@ struct CatalogEntryRow: View {
     let onPaste: (() -> Void)?
     let onExport: ((DiskCatalogEntry) -> Void)?
     let onDelete: ((DiskCatalogEntry) -> Void)?
+    let dragProvider: ((DiskCatalogEntry) -> NSItemProvider)?
     let level: Int
     let expandAllTrigger: Bool
     @ObservedObject var columnWidths: ColumnWidths
     
     @State private var isExpanded: Bool
     
-    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, level: Int, expandAllTrigger: Bool, columnWidths: ColumnWidths) {
+    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, expandAllTrigger: Bool, columnWidths: ColumnWidths) {
         self.entry = entry
         self.isSelected = isSelected
         self.onToggle = onToggle
@@ -41,6 +42,7 @@ struct CatalogEntryRow: View {
         self.onPaste = onPaste
         self.onExport = onExport
         self.onDelete = onDelete
+        self.dragProvider = dragProvider
         self.level = level
         self.expandAllTrigger = expandAllTrigger
         self.columnWidths = columnWidths
@@ -68,6 +70,11 @@ struct CatalogEntryRow: View {
                 onDelete: onDelete,
                 columnWidths: columnWidths
             )
+            // Each row is its own drag source, so the drag image is this row
+            // and not the folder with everything shown inside it
+            .onDrag {
+                dragProvider?(entry) ?? NSItemProvider()
+            }
             
             // Children (if expanded)
             if isExpanded, let children = entry.children, !children.isEmpty {
@@ -86,6 +93,7 @@ struct CatalogEntryRow: View {
                         onPaste: onPaste,
                         onExport: onExport,
                         onDelete: onDelete,
+                        dragProvider: dragProvider,
                         level: level + 1,
                         expandAllTrigger: expandAllTrigger,
                         columnWidths: columnWidths

@@ -9,6 +9,12 @@ import SwiftUI
 import Foundation
 import Combine
 
+/// A file handed to the app from outside, already read into memory
+struct ImportedFile {
+    let filename: String
+    let data: Data
+}
+
 class DiskPaneViewModel: ObservableObject {
     @Published var catalog: DiskCatalog?
     @Published var diskImagePath: URL?
@@ -836,35 +842,44 @@ class DiskPaneViewModel: ObservableObject {
         importFiles(from: [url])
     }
     
-    /// Imports files from the Mac into the directory shown in this pane, one at a time
-    func importFiles(from urls: [URL]) {
-        guard catalog != nil, let imagePath = diskImagePath, !urls.isEmpty else { return }
+    /// Imports files from the Mac into the directory shown in this pane, one at a time.
+    /// `files` are items that were already read into memory (a drop without a file URL).
+    func importFiles(from urls: [URL], and files: [ImportedFile] = []) {
+        var allFiles = files
+        var failures: [String] = []
+        
+        for url in urls {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            
+            if let data = try? Data(contentsOf: url) {
+                allFiles.append(ImportedFile(filename: url.lastPathComponent, data: data))
+            } else {
+                failures.append("\(url.lastPathComponent): could not be read")
+            }
+        }
+        
+        guard catalog != nil, let imagePath = diskImagePath, !(allFiles.isEmpty && failures.isEmpty) else { return }
         guard canWrite("Import") else { return }
         
-        importNextFile(urls, index: 0, failures: []) { failures in
+        importNextFile(allFiles, index: 0, failures: failures) { failures in
             self.loadDiskImage(from: imagePath)
             self.reportFailures("Some Files Could Not Be Imported", failures)
         }
     }
     
-    private func importNextFile(_ urls: [URL], index: Int, failures: [String], completion: @escaping ([String]) -> Void) {
-        guard index < urls.count else {
+    private func importNextFile(_ files: [ImportedFile], index: Int, failures: [String], completion: @escaping ([String]) -> Void) {
+        guard index < files.count else {
             completion(failures)
             return
         }
         
-        let url = urls[index]
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let file = files[index]
+        let fileExtension = (file.filename as NSString).pathExtension
         
-        guard let fileData = try? Data(contentsOf: url) else {
-            importNextFile(urls, index: index + 1, failures: failures + ["\(url.lastPathComponent): could not be read"], completion: completion)
-            return
-        }
-        
-        addImportedFile(fileData, filename: url.lastPathComponent,
-                        fileType: Self.importFileType(forExtension: url.pathExtension), auxType: 0x0000) { failure in
-            self.importNextFile(urls, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
+        addImportedFile(file.data, filename: file.filename,
+                        fileType: Self.importFileType(forExtension: fileExtension), auxType: 0x0000) { failure in
+            self.importNextFile(files, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
         }
     }
 

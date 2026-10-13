@@ -200,3 +200,23 @@ Found and fixed:
 Worked in the sandbox after the fixes: opening images, cut/paste between two images, copying a DOS 3.3 file to ProDOS, New Folder, Delete with confirmation, Export to Downloads, and creating a new `.2mg` through the save panel.
 
 Not exercised in the sandbox: drag and drop between panes and from Finder, opening an archive, and a build signed with the real team identity (the test used ad-hoc signing).
+
+## Review — drag and drop in the sandbox (2026-10-13)
+
+Run on the ad-hoc signed sandboxed build with throwaway images and files.
+
+Found and fixed:
+
+- **A text file dragged from Finder arrived as `PASTED.TXT`.** Finder hands a text file over as data without a file URL, and the drop handler took that for pasted text. The handler now loads every dropped item first (file URL, file data, or the JSON of entries from the other pane) and sorts them out afterwards, so files keep their names (`DiskBrowserPane.handleDrop`, `DiskPaneViewModel.importFiles`).
+
+Worked after the fix: dragging a file between panes, a drop back onto the same pane being ignored, one text file from Finder, two files of different types from Finder at once, and an archive from Finder opening in the pane. The images on disk were checked afterwards.
+
+Not exercised: dragging a folder from Finder, dragging text from another app, and a build signed with the real team identity.
+
+## Review — drag image for files inside a folder (2026-10-13)
+
+Reported by the user: dragging one file out of an expanded folder showed the whole folder with all its files as the drag image, although only the selected file was copied.
+
+Cause: the drag source was the top-level row, which contains the folder and every row shown inside it. Each row is now its own drag source (`CatalogEntryRow`), so the drag image is that row. A row that is not selected is now dragged on its own; a selected row still takes the whole selection.
+
+Checked in the running sandboxed build: dragging `README` out of an expanded `GAMES` folder shows only that row and copies only that file.
