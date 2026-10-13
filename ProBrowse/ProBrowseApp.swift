@@ -12,12 +12,16 @@ struct ProBrowseApp: App {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup {
+        // A single main window. Unlike a window group, this scene keeps an entry in the
+        // Window menu, so the window can be brought back after it has been closed.
+        Window("RetroBrowse", id: "main-window") {
             ContentView()
                 .onReceive(NotificationCenter.default.publisher(for: .showHelp)) { _ in
                     openWindow(id: "help-window")
                 }
         }
+        // The main window always opens at launch, whatever was open when the app last quit
+        .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Disk Image...") {
@@ -50,10 +54,8 @@ struct ProBrowseApp: App {
 
             CommandGroup(replacing: .help) {
                 Button("ProBrowse Help") {
-                    NotificationCenter.default.post(
-                        name: .showHelp,
-                        object: nil
-                    )
+                    // Opened directly, so Help also works while the main window is closed
+                    openWindow(id: "help-window")
                 }
                 .keyboardShortcut("?", modifiers: .command)
 
@@ -71,6 +73,9 @@ struct ProBrowseApp: App {
             HelpWindow()
         }
         .defaultSize(width: 700, height: 500)
+        // Help opens on request only, never on its own at launch
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
     }
 }
 

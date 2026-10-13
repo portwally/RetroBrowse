@@ -249,3 +249,15 @@ Found and fixed:
 - **Long text files went blank.** A single text view stops drawing after a few thousand lines, so most of a 300 KB file showed as empty space; the 256 KB cap did not help. The text is now shown in pieces of 100 lines that are created as they scroll into view, and the cap and its note are gone. Checked around line 3000, across a piece boundary.
 - **Help text could not be selected**, so Cmd+C had nothing to copy. Selection is now enabled; a selected line was copied to the clipboard and read back.
 
+
+## App Store rejection — Guideline 4, main window cannot be reopened (2026-10-13)
+
+The main scene was a window group whose "New Window" command had been replaced, so a closed main window could not be brought back.
+
+- The main scene is now a single `Window`, which keeps a "RetroBrowse" entry in the Window menu.
+- The main window always opens at launch; the Help window opens on request only and is not restored.
+- Help opens directly from its menu command, so it also works while the main window is closed.
+
+Checked in the running sandboxed build through the menus: closing the main window and reopening it from Window > RetroBrowse; and quitting with only Help open, after which the next launch showed the main window and no Help window.
+
+The other two rejection points (subtitle wording, demo video request) are App Store Connect matters, not code.
