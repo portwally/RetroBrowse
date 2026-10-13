@@ -1,14 +1,14 @@
-# ProBrowse
+# RetroBrowse
 
-This is an early version under active development. It may contain bugs that could corrupt your disk images. **Always backup your disk images before using ProBrowse!**
+This is an early version under active development. It may contain bugs that could corrupt your disk images. **Always backup your disk images before using RetroBrowse!**
 
 ---
 
 <img width="1561" height="820" alt="Bildschirmfoto 2025-12-27 um 20 02 29" src="https://github.com/user-attachments/assets/19469707-805b-4c16-9fb5-c9f4bc5179f8" />
 
-## What is ProBrowse?
+## What is RetroBrowse?
 
-ProBrowse is a modern macOS dual-pane file manager for Apple II disk images, bringing vintage computing into the 21st century.
+RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, bringing vintage computing into the 21st century.
 
 ### Features
 
@@ -113,6 +113,6 @@ Built with Swift and SwiftUI for modern macOS.
 
 **Remember: Always backup your disk images before using beta software!**
 
-[![Downloads](https://img.shields.io/github/downloads/portwally/ProBrowse/total?style=flat&color=0d6efd)](https://github.com/portwally/ProBrowse/releases)
-[![Stars](https://img.shields.io/github/stars/portwally/ProBrowse?style=flat&color=f1c40f)](https://github.com/portwally/ProBrowse/stargazers)
-[![Forks](https://img.shields.io/github/forks/portwally/ProBrowse?style=flat&color=2ecc71)](https://github.com/portwally/ProBrowse/network/members)
+[![Downloads](https://img.shields.io/github/downloads/portwally/RetroBrowse/total?style=flat&color=0d6efd)](https://github.com/portwally/RetroBrowse/releases)
+[![Stars](https://img.shields.io/github/stars/portwally/RetroBrowse?style=flat&color=f1c40f)](https://github.com/portwally/RetroBrowse/stargazers)
+[![Forks](https://img.shields.io/github/forks/portwally/RetroBrowse?style=flat&color=2ecc71)](https://github.com/portwally/RetroBrowse/network/members)

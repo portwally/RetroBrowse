@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to ProBrowse will be documented in this file.
+All notable changes to RetroBrowse will be documented in this file.
 
 ## [2.6] - Unreleased
 
