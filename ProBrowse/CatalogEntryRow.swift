@@ -156,7 +156,7 @@ struct CatalogEntryRowContent: View {
                         Text(entry.icon)
                             .font(.body)
                         
-                        Text(entry.name)
+                        Text(entry.isLocked ? entry.name + " 🔒" : entry.name)
                             .lineLimit(1)
                             .fontWeight(entry.isDirectory ? .semibold : .regular)
                         

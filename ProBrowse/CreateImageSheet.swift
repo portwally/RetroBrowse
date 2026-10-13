@@ -28,21 +28,22 @@ struct CreateImageSheet: View {
         
         guard !volumeName.isEmpty && volumeName.count <= 15 else { return false }
         
-        let allowedCharacters = CharacterSet.uppercaseLetters
-            .union(CharacterSet.decimalDigits)
-            .union(CharacterSet(charactersIn: "."))
-        
         // Check all characters are valid
-        guard volumeName.unicodeScalars.allSatisfy({ allowedCharacters.contains($0) }) else {
+        guard volumeName.allSatisfy(Self.isAllowedInVolumeName) else {
             return false
         }
         
         // Must start with a letter
-        guard let firstChar = volumeName.first, firstChar.isLetter && firstChar.isUppercase else {
+        guard let firstChar = volumeName.first, firstChar.isLetter else {
             return false
         }
         
         return true
+    }
+    
+    /// ProDOS names use ASCII A-Z, 0-9 and period only
+    nonisolated private static func isAllowedInVolumeName(_ character: Character) -> Bool {
+        return character.isASCII && (character.isUppercase || character.isNumber || character == ".")
     }
     
     private var volumeNameHelp: String {
@@ -118,10 +119,7 @@ struct CreateImageSheet: View {
                             volumeName = newValue.uppercased()
                             
                             // Remove invalid characters
-                            let allowedSet = CharacterSet.uppercaseLetters
-                                .union(CharacterSet.decimalDigits)
-                                .union(CharacterSet(charactersIn: "."))
-                            volumeName = String(volumeName.unicodeScalars.filter { allowedSet.contains($0) })
+                            volumeName = volumeName.filter(Self.isAllowedInVolumeName)
                             
                             // Limit to 15 characters
                             if volumeName.count > 15 {
@@ -228,14 +226,15 @@ struct CreateImageSheet: View {
     }
     
     private func createDiskImage() {
-        guard var outputPath = savePath else { return }
+        guard let outputPath = savePath else { return }
         
-        // CRITICAL FIX: Ensure file extension is present
+        // The save panel confirmed this exact file. If the format was changed afterwards the
+        // name no longer matches it, and a different file must be confirmed in the panel again.
         let expectedExtension = imageFormat.fileExtension
-        if outputPath.pathExtension.lowercased() != expectedExtension.lowercased() {
-            // Add the extension if missing
-            outputPath = outputPath.deletingPathExtension().appendingPathExtension(expectedExtension)
-            print("Fixed path to include extension: \(outputPath.path)")
+        guard outputPath.pathExtension.lowercased() == expectedExtension.lowercased() else {
+            savePath = nil
+            errorMessage = "The format changed. Choose where to save the .\(expectedExtension) image."
+            return
         }
         
         isCreating = true

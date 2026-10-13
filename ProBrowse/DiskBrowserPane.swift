@@ -36,6 +36,9 @@ struct DiskBrowserPane: View {
                 emptyStateView
             }
         }
+        // The whole pane takes the click, empty space below the file list included
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .onTapGesture {
             // Set this pane as active when clicked
             focusManager.setActivePane(paneId)
@@ -49,7 +52,7 @@ struct DiskBrowserPane: View {
         }
         .fileImporter(
             isPresented: $viewModel.showingFilePicker,
-            allowedContentTypes: [.po, .twoimg, .hdv, .dsk, .do],
+            allowedContentTypes: DiskPaneViewModel.openableExtensions.map { UTType(filenameExtension: $0) ?? .data },
             allowsMultipleSelection: false
         ) { result in
             switch result {
@@ -128,8 +131,8 @@ struct DiskBrowserPane: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
-                    if let imageData = viewModel.diskImagePath.flatMap({ try? Data(contentsOf: $0) }) {
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(imageData.count), countStyle: .file))
+                    if let fileSize = viewModel.diskImageFileSize {
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))
                             .font(.caption)
                             .fontWeight(.medium)
                     } else {
@@ -282,41 +285,8 @@ struct DiskBrowserPane: View {
             },
             onPaste: {
                 focusManager.setActivePane(paneId)
-                // Paste into THIS pane (not target!)
-                let clipboard = FocusManager.shared
-                guard clipboard.hasClipboard() else {
-                    print("❌ Clipboard is empty")
-                    return
-                }
-                guard let sourcePath = clipboard.clipboardSourcePath else {
-                    print("❌ No source in clipboard")
-                    return
-                }
-                guard let targetPath = viewModel.diskImagePath else {
-                    print("❌ No disk loaded in this pane")
-                    return
-                }
-                
-                print("📋 Pasting into CURRENT pane (\(paneId))")
-                
-                viewModel.copyDirectoryContents(clipboard.clipboardEntries, from: sourcePath, to: targetPath) {
-                    print("✅ Pasted into \(paneId) pane")
-                    
-                    // If CUT, delete from source
-                    if clipboard.clipboardOperation == .cut {
-                        print("✂️ Cut operation - deleting from source")
-                        for entry in clipboard.clipboardEntries {
-                            ProDOSWriter.shared.deleteFile(diskImagePath: sourcePath, fileName: entry.name) { _, _ in }
-                        }
-                    }
-                    
-                    clipboard.clearClipboard()
-                    
-                    // Reload THIS pane
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        viewModel.loadDiskImage(from: targetPath)
-                    }
-                }
+                // Paste into THIS pane
+                viewModel.pasteClipboard()
             },
             onExport: { entry in
                 focusManager.setActivePane(paneId)
@@ -339,23 +309,24 @@ struct DiskBrowserPane: View {
             columnWidths: columnWidths
         )
         .onDrag {
-            createDragProvider()
+            createDragProvider(for: entry)
         }
     }
     
     // MARK: - Drag Provider
     
-    private func createDragProvider() -> NSItemProvider {
-        let selectedEntries = viewModel.getSelectedEntries()
-        print("🎯 Starting drag with \(selectedEntries.count) entries")
-        for entry in selectedEntries {
-            print("   - \(entry.name)")
+    private func createDragProvider(for entry: DiskCatalogEntry) -> NSItemProvider {
+        // Drag the selection; with nothing selected, drag the row itself
+        var selectedEntries = viewModel.getSelectedEntries()
+        if selectedEntries.isEmpty {
+            selectedEntries = [entry]
         }
         draggedEntries = selectedEntries
         
-        // Encode to JSON string
+        // Encode to JSON string, tagged with the image the entries come from
         do {
-            let jsonData = try JSONEncoder().encode(selectedEntries)
+            let payload = DragPayload(sourceImagePath: viewModel.diskImagePath?.path ?? "", entries: selectedEntries)
+            let jsonData = try JSONEncoder().encode(payload)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 print("📦 Encoded JSON (\(jsonString.count) chars)")
                 print("   First 100 chars: \(String(jsonString.prefix(100)))")
@@ -420,9 +391,14 @@ struct DiskBrowserPane: View {
                             }
 
                             // Try to decode as inter-pane transfer (JSON array of DiskCatalogEntry)
-                            if let entries = try? JSONDecoder().decode([DiskCatalogEntry].self, from: data) {
-                                print("✅ DROP: Decoded \(entries.count) entries from inter-pane JSON")
-                                self.viewModel.importEntries(entries, from: self.targetViewModel)
+                            if let payload = try? JSONDecoder().decode(DragPayload.self, from: data) {
+                                // Dropping entries back onto the image they came from would only duplicate them
+                                guard payload.sourceImagePath != self.viewModel.diskImagePath?.path else {
+                                    print("↩️ DROP: Ignoring drop onto the source pane")
+                                    return
+                                }
+                                print("✅ DROP: Decoded \(payload.entries.count) entries from inter-pane JSON")
+                                self.viewModel.importEntries(payload.entries, from: self.targetViewModel)
                             } else {
                                 // Not JSON - treat as pasted text
                                 print("📝 DROP: Not JSON, treating as pasted text")
@@ -436,33 +412,34 @@ struct DiskBrowserPane: View {
         }
 
         // PRIORITY 2: Handle drop from Finder (file URLs)
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                print("📁 DROP: Found fileURL provider")
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        if !fileProviders.isEmpty {
+            let group = DispatchGroup()
+            var droppedURLs: [URL] = []
+
+            for provider in fileProviders {
+                group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (urlData, error) in
                     DispatchQueue.main.async {
-                        guard error == nil,
-                              let data = urlData as? Data,
-                              let url = URL(dataRepresentation: data, relativeTo: nil) else {
-                            print("❌ DROP: Failed to load fileURL")
-                            return
+                        if error == nil, let data = urlData as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                            droppedURLs.append(url)
                         }
-
-                        let ext = url.pathExtension.lowercased()
-                        print("📁 DROP: Loaded file: \(url.lastPathComponent), ext: \(ext)")
-
-                        // Check if it's a disk image to open
-                        if ["po", "2mg", "hdv", "dsk", "do"].contains(ext) {
-                            print("💾 DROP: Opening as disk image")
-                            self.viewModel.loadDiskImage(from: url)
-                        } else {
-                            print("📄 DROP: Importing as file")
-                            self.viewModel.importFile(from: url)
-                        }
+                        group.leave()
                     }
                 }
-                return true
             }
+
+            group.notify(queue: .main) {
+                // A disk image or archive is opened; anything else is imported into the open disk
+                if let image = droppedURLs.first(where: { DiskPaneViewModel.openableExtensions.contains($0.pathExtension.lowercased()) }) {
+                    print("💾 DROP: Opening as disk image")
+                    self.viewModel.loadDiskImage(from: image)
+                } else {
+                    print("📄 DROP: Importing \(droppedURLs.count) files")
+                    self.viewModel.importFiles(from: droppedURLs)
+                }
+            }
+            return true
         }
 
         // PRIORITY 3: Handle files dropped by content type (e.g., public.assembly-source)
@@ -492,7 +469,7 @@ struct DiskBrowserPane: View {
 
                     DispatchQueue.main.async {
                         // Check if it's a disk image
-                        if ["po", "2mg", "hdv", "dsk", "do"].contains(ext) {
+                        if DiskPaneViewModel.openableExtensions.contains(ext) {
                             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
                             if let _ = try? data.write(to: tempURL) {
                                 print("💾 DROP: Opening source file as disk image")
@@ -579,6 +556,14 @@ struct DiskBrowserPane: View {
         // ProDOS max filename is 15 characters
         return String(sanitized.prefix(15))
     }
+}
+
+// MARK: - Drag Payload
+
+/// What travels between panes in a drag: the entries and the image they came from
+struct DragPayload: Codable {
+    let sourceImagePath: String
+    let entries: [DiskCatalogEntry]
 }
 
 // MARK: - Dragged Entries Wrapper

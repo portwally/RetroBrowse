@@ -86,13 +86,12 @@ struct LineView: View {
     let isWYSIWYG: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        Group {
             if line.runs.isEmpty {
                 Text(" ")  // Empty line placeholder
             } else {
-                ForEach(Array(line.runs.enumerated()), id: \.offset) { _, run in
-                    RunView(run: run, colorPalette: colorPalette, isWYSIWYG: isWYSIWYG)
-                }
+                // One Text for the whole line, so a long paragraph wraps as a unit
+                line.runs.reduce(Text("")) { $0 + RunView(run: $1, colorPalette: colorPalette, isWYSIWYG: isWYSIWYG).text }
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment)
@@ -115,6 +114,10 @@ struct RunView: View {
     let isWYSIWYG: Bool
 
     var body: some View {
+        text
+    }
+
+    var text: Text {
         Text(run.text)
             .font(wysiwygFont)
             .fontWeight(run.isBold ? .bold : .regular)

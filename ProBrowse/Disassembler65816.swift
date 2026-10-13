@@ -426,9 +426,6 @@ class Disassembler65816 {
         0xE10004: "INTFUNC",
         0xE10008: "USERTOOLFUNC",
 
-        // Toolbox calls (common ones)
-        0xE10000: "ToolLocator",
-
         // ROM Entry Points
         0xFA0000: "ROM01",
         0xFE0000: "ROM03",
@@ -471,13 +468,13 @@ class Disassembler65816 {
         var offset = 0
         var address = startAddress
 
-        // Initialize processor flags
+        // Initialize processor flags. Both modes start with 8-bit registers;
+        // only native mode lets REP widen them.
         var flags = ProcessorFlags65816()
-        if startInNativeMode {
-            flags.eFlag = false
-            flags.mFlag = true   // Start with 8-bit accumulator
-            flags.xFlag = true   // Start with 8-bit index
-        }
+        flags.eFlag = !startInNativeMode
+        
+        // Carry as set by a CLC or SEC directly before the current instruction, if any
+        var knownCarry: Bool? = nil
 
         while offset < data.count && instructions.count < maxInstructions {
             let opcodeByte = data[offset]
@@ -498,12 +495,23 @@ class Disassembler65816 {
             if opcodeByte == 0xE2 && bytes.count >= 2 {  // SEP
                 flags.applySEP(bytes[1])
             } else if opcodeByte == 0xC2 && bytes.count >= 2 {  // REP
-                flags.applyREP(bytes[1])
-            } else if opcodeByte == 0xFB {  // XCE
-                // Can't know the carry flag value, assume switch to native
-                if flags.eFlag {
+                // M and X are fixed at 8 bits in emulation mode
+                if !flags.eFlag {
+                    flags.applyREP(bytes[1])
+                }
+            } else if opcodeByte == 0xFB {  // XCE swaps carry and the emulation flag
+                if knownCarry == true {
+                    flags.enterEmulationMode()
+                } else if knownCarry == false || flags.eFlag {
+                    // Without a CLC/SEC in front the carry is unknown; assume a switch to native
                     flags.enterNativeMode()
                 }
+            }
+            
+            switch opcodeByte {
+            case 0x18: knownCarry = false  // CLC
+            case 0x38: knownCarry = true   // SEC
+            default: knownCarry = nil
             }
 
             // Format operand

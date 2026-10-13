@@ -220,7 +220,6 @@ class ApplesoftDetokenizer {
                     if let token = tokens[byte] {
                         // Operators that need space before and after
                         let comparisonOps: Set<String> = ["=", "<", ">", "AND", "OR", "NOT"]
-                        let mathOps: Set<String> = ["+", "-", "*", "/", "^"]
 
                         // Add space before token if needed
                         if let lastChar = result.last {

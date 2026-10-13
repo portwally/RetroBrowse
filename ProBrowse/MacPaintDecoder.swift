@@ -41,22 +41,24 @@ class MacPaintDecoder {
             return false
         }
 
-        // Try to decompress a few rows to verify
-        var testOutput = [UInt8](repeating: 0, count: ROW_STRIDE * 10)
-        var srcOffset = HEADER_SIZE
-        var dstOffset = 0
+        // PackBits never grows a row by more than one byte
+        guard data.count <= HEADER_SIZE + IMAGE_HEIGHT * (ROW_STRIDE + 1) + HEADER_SIZE else { return false }
 
-        for _ in 0..<10 {
+        // Every one of the 720 rows must decode from the data that is there
+        var testOutput = [UInt8](repeating: 0, count: ROW_STRIDE)
+        var srcOffset = HEADER_SIZE
+
+        for _ in 0..<IMAGE_HEIGHT {
+            guard srcOffset < data.count else { return false }
             let result = unpackBitsRow(
                 data: data,
                 srcOffset: srcOffset,
                 dstBuffer: &testOutput,
-                dstOffset: dstOffset,
+                dstOffset: 0,
                 dstLength: ROW_STRIDE
             )
             if result < 0 { return false }
             srcOffset = result
-            dstOffset += ROW_STRIDE
         }
 
         return true
@@ -71,7 +73,7 @@ class MacPaintDecoder {
         var srcOffset = HEADER_SIZE
         var dstOffset = 0
 
-        for row in 0..<IMAGE_HEIGHT {
+        for _ in 0..<IMAGE_HEIGHT {
             let result = unpackBitsRow(
                 data: data,
                 srcOffset: srcOffset,
@@ -106,19 +108,22 @@ class MacPaintDecoder {
             }
         }
 
-        // Create CGImage
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let context = CGContext(
-            data: &pixels,
+        // Create CGImage from a copy of the pixels that the image owns
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+
+        return CGImage(
             width: IMAGE_WIDTH,
             height: IMAGE_HEIGHT,
             bitsPerComponent: 8,
+            bitsPerPixel: 8,
             bytesPerRow: IMAGE_WIDTH,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-
-        return context.makeImage()
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
     }
 
     /// Unpack a single row using PackBits decompression
@@ -226,7 +231,7 @@ extension MacPaintDecoder {
                 i += runLength
             } else {
                 // Look for literal sequence
-                var literalStart = i
+                let literalStart = i
                 var literalLength = 0
 
                 while i < row.count && literalLength < 128 {

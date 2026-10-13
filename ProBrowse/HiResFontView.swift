@@ -134,8 +134,6 @@ class HiResFontDecoder {
 
         var pixels = [UInt8](repeating: 255, count: scaledWidth * scaledHeight * 4) // RGBA white background
 
-        let bytesPerRow = (width == 14) ? 2 : 1
-
         for row in 0..<height {
             for col in 0..<width {
                 let byteIndex: Int
@@ -237,8 +235,6 @@ class HiResFontDecoder {
 
             let startX = col * cellWidth + (showGrid ? 1 : 0)
             let startY = row * cellHeight + (showGrid ? 1 : 0)
-
-            let bytesPerRow = (font.glyphWidth == 14) ? 2 : 1
 
             for glyphRow in 0..<font.glyphHeight {
                 for glyphCol in 0..<font.glyphWidth {

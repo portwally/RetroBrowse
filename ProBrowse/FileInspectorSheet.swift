@@ -335,10 +335,13 @@ struct FileInspectorSheet: View {
             } else if lowByte == 0x0A {
                 // Skip LF (often follows CR)
             } else if lowByte == 0x00 {
-                // End of text in some formats
-                break
+                // Padding between the records of a random-access text file:
+                // start a new line once per run of NULs rather than stopping
+                if !result.isEmpty && !result.hasSuffix("\n") {
+                    result += "\n"
+                }
             } else {
-                result += "."  // Non-printable character
+                result += "."
             }
         }
         return result
@@ -693,8 +696,11 @@ struct TextContentView: View {
             } else if lowByte == 0x0A {
                 // Skip LF if it follows CR
             } else if lowByte == 0x00 {
-                // End of text in some formats
-                break
+                // Padding between the records of a random-access text file:
+                // start a new line once per run of NULs rather than stopping
+                if !result.isEmpty && !result.hasSuffix("\n") {
+                    result += "\n"
+                }
             } else {
                 result += "."
             }
@@ -869,7 +875,8 @@ struct GraphicsPreviewView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    let res = imageType.resolution
+                    // The decoded picture's own size; the type's nominal size is wrong for 640-mode and tall pictures
+                    let res = decodedImage.map { (width: $0.width, height: $0.height) } ?? imageType.resolution
                     Text("\(res.width)x\(res.height)")
                         .font(.caption)
                         .foregroundColor(.secondary)

@@ -35,9 +35,6 @@ class MerlinDecoder {
         var lines: [MerlinLine] = []
         var offset = 0
 
-        // Detect if this is high-ASCII or low-ASCII
-        let isHighASCII = data.contains { ($0 & 0x80) != 0 && $0 != 0x8D }
-
         while offset < data.count {
             // Find end of line (0x8D for high-ASCII, 0x0A or 0x0D for low-ASCII)
             var lineEnd = offset
@@ -50,7 +47,7 @@ class MerlinDecoder {
             }
 
             // Parse this line
-            let line = parseLine(data: data, start: offset, end: lineEnd, isHighASCII: isHighASCII)
+            let line = parseLine(data: data, start: offset, end: lineEnd)
             lines.append(line)
 
             // Move past the line ending
@@ -65,7 +62,7 @@ class MerlinDecoder {
     }
 
     /// Parse a single line of Merlin source
-    private static func parseLine(data: Data, start: Int, end: Int, isHighASCII: Bool = true) -> MerlinLine {
+    private static func parseLine(data: Data, start: Int, end: Int) -> MerlinLine {
         guard start < end else {
             return MerlinLine(label: "", opcode: "", operand: "", comment: "", isFullLineComment: false)
         }
@@ -80,89 +77,62 @@ class MerlinDecoder {
             return MerlinLine(label: "", opcode: "", operand: "", comment: comment, isFullLineComment: true)
         }
 
-        // Column separator: high-ASCII space (0xA0) or multiple low-ASCII spaces
-        // For low-ASCII, we use multiple spaces as separator
-        let spaceSeparator: UInt8 = isHighASCII ? 0xA0 : 0x20
+        // Fields are separated by spaces (one high-ASCII space in a Merlin file, often
+        // several in a low-ASCII listing). A line that starts with a space has no label.
+        func isSpace(_ byte: UInt8) -> Bool {
+            return byte == 0xA0 || byte == 0x20 || byte == 0x09
+        }
 
-        // Parse columns separated by space(s)
-        var columns: [String] = []
-        var colStart = start
-        var inQuote = false
-        var quoteChar: UInt8 = 0
-        var spaceCount = 0
+        var fields: [String] = []   // label, opcode, operand
+        var comment = ""
+        var pos = start
 
-        for i in start..<end {
-            let byte = data[i]
-            let lowByte = byte & 0x7F
-
-            // Track quoted strings (in operand column)
-            if columns.count == 2 && !inQuote && (lowByte == UInt8(ascii: "'") || lowByte == UInt8(ascii: "\"")) {
-                inQuote = true
-                quoteChar = lowByte
-            } else if inQuote && lowByte == quoteChar {
-                inQuote = false
+        while pos < end && fields.count < 3 {
+            // A semicolon where a field would start begins the comment
+            if !fields.isEmpty && (data[pos] & 0x7F) == UInt8(ascii: ";") {
+                break
             }
 
-            // Check for column separator
-            let isSpace = (byte == 0xA0) || (byte == 0x20) || (byte == 0x09)  // High-ASCII space, space, or tab
+            let fieldStart = pos
+            var quoteChar: UInt8? = nil
 
-            if isSpace && !inQuote {
-                spaceCount += 1
-                // For low-ASCII, treat multiple spaces or a single high-ASCII space as separator
-                let isSeparator = (byte == 0xA0) || (byte == 0x09) || (spaceCount >= 2 && !isHighASCII) || (isHighASCII && byte == 0xA0)
+            while pos < end {
+                let lowByte = data[pos] & 0x7F
 
-                if isSeparator && colStart < i {
-                    let colText = extractText(data: data, start: colStart, end: i - (spaceCount - 1), stripHigh: true)
-                    if !colText.isEmpty || columns.count == 0 {
-                        columns.append(colText)
-                    }
-
-                    // Skip additional spaces
-                    var nextIdx = i + 1
-                    while nextIdx < end && (data[nextIdx] == 0x20 || data[nextIdx] == 0xA0 || data[nextIdx] == 0x09) {
-                        nextIdx += 1
-                    }
-                    colStart = nextIdx
-
-                    // Check for semicolon starting a comment
-                    if colStart < end {
-                        let nextByte = data[colStart] & 0x7F
-                        if nextByte == UInt8(ascii: ";") {
-                            // Rest of line is comment
-                            let commentText = extractText(data: data, start: colStart, end: end, stripHigh: true)
-                            columns.append(commentText)
-                            colStart = end
-                            break
-                        }
-                    }
-
-                    // Stop after 4 columns
-                    if columns.count >= 4 {
-                        break
-                    }
-                    spaceCount = 0
+                if let quote = quoteChar {
+                    if lowByte == quote { quoteChar = nil }
+                } else if isSpace(data[pos]) {
+                    break
+                } else if fields.count == 2 && (lowByte == UInt8(ascii: "'") || lowByte == UInt8(ascii: "\"")) {
+                    // Spaces inside a quoted operand belong to it. A quote that is never
+                    // closed (as in LDA #"A) is just a character.
+                    let hasClosingQuote = ((pos + 1)..<end).contains { (data[$0] & 0x7F) == lowByte }
+                    if hasClosingQuote { quoteChar = lowByte }
                 }
-            } else {
-                spaceCount = 0
+                pos += 1
+            }
+
+            fields.append(extractText(data: data, start: fieldStart, end: pos, stripHigh: true))
+
+            while pos < end && isSpace(data[pos]) {
+                pos += 1
             }
         }
 
-        // Add remaining text as last column
-        if colStart < end && columns.count < 4 {
-            let colText = extractText(data: data, start: colStart, end: end, stripHigh: true)
-            columns.append(colText)
+        // Whatever follows the operand is the comment
+        if pos < end {
+            comment = extractText(data: data, start: pos, end: end, stripHigh: true)
         }
 
-        // Pad to 4 columns
-        while columns.count < 4 {
-            columns.append("")
+        while fields.count < 3 {
+            fields.append("")
         }
 
         return MerlinLine(
-            label: columns[0],
-            opcode: columns[1],
-            operand: columns[2],
-            comment: columns[3],
+            label: fields[0],
+            opcode: fields[1],
+            operand: fields[2],
+            comment: comment,
             isFullLineComment: false
         )
     }

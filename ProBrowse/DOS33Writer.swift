@@ -149,9 +149,6 @@ class DOS33Writer {
     private func findFileEntry(_ diskData: Data, fileName: String, catalogTrack: Int, catalogSector: Int) -> (track: Int, sector: Int, entryIndex: Int, tsTrack: Int, tsSector: Int)? {
         // Clean the search name - remove lock icon if present, trim, uppercase
         var searchName = fileName
-        if searchName.hasSuffix(" 🔒") {
-            searchName = String(searchName.dropLast(2))
-        }
         searchName = searchName.trimmingCharacters(in: .whitespaces).uppercased()
         
         var currentTrack = catalogTrack
@@ -212,10 +209,47 @@ class DOS33Writer {
         return nil
     }
     
+    /// Every sector the catalog and its files occupy, as track * 16 + sector.
+    /// Many disks have a VTOC bitmap that marks some of these free, so the
+    /// allocator checks this set as well and never hands such a sector out.
+    private func sectorsInUse(_ diskData: Data, catalogTrack: Int, catalogSector: Int) -> Set<Int> {
+        var inUse = Set<Int>()
+        var currentTrack = catalogTrack
+        var currentSector = catalogSector
+        
+        while currentTrack != 0, currentTrack < TRACKS, currentSector < SECTORS_PER_TRACK,
+              inUse.insert(currentTrack * SECTORS_PER_TRACK + currentSector).inserted {
+            let sectorOffset = offset(track: currentTrack, sector: currentSector)
+            guard sectorOffset + SECTOR_SIZE <= diskData.count else { break }
+            
+            for entryIdx in 0..<7 {
+                let entryOffset = sectorOffset + 0x0B + (entryIdx * 0x23)
+                let tsTrack = Int(diskData[entryOffset])
+                let tsSector = Int(diskData[entryOffset + 1])
+                
+                // Skip deleted and unused entries
+                if tsTrack == 0x00 || tsTrack == 0xFF || tsTrack >= TRACKS || tsSector >= SECTORS_PER_TRACK { continue }
+                
+                for sector in getFileSectors(diskData, tsTrack: tsTrack, tsSector: tsSector) {
+                    inUse.insert(sector.track * SECTORS_PER_TRACK + sector.sector)
+                }
+            }
+            
+            currentTrack = Int(diskData[sectorOffset + 0x01])
+            currentSector = Int(diskData[sectorOffset + 0x02])
+        }
+        
+        return inUse
+    }
+    
     /// Allocate sectors for a file using VTOC bitmap
     private func allocateSectors(_ diskData: NSMutableData, sectorCount: Int, direction: Int) -> [(track: Int, sector: Int)]? {
         let vtocOffset = offset(track: VTOC_TRACK, sector: VTOC_SECTOR)
         var allocatedSectors: [(track: Int, sector: Int)] = []
+        
+        let catalogTrack = Int(diskData[vtocOffset + 0x01])
+        let catalogSector = Int(diskData[vtocOffset + 0x02])
+        let inUse = sectorsInUse(diskData as Data, catalogTrack: catalogTrack, catalogSector: catalogSector)
         
         // VTOC bitmap: starts at offset 0x38 (56 bytes)
         // 4 bytes per track (32 bits for 16 sectors, but only 16 used)
@@ -232,25 +266,25 @@ class DOS33Writer {
         }
         
         for track in trackRange {
-            // Skip track 17 (VTOC and catalog)
-            if track == VTOC_TRACK { continue }
+            // Skip track 17 (VTOC and catalog) and track 0: a track number of 0
+            // in a catalog entry or T/S pair means "unused"
+            if track == VTOC_TRACK || track == 0 { continue }
             
             let trackBitmapOffset = bitmapOffset + (track * 4)
 
             // Bounds check: ensure 4 bitmap bytes are within disk data
             guard trackBitmapOffset + 3 < diskData.count else { continue }
 
-            // Read 4-byte bitmap for this track (little-endian)
-            var bitmap = UInt32(diskData[trackBitmapOffset])
-            bitmap |= UInt32(diskData[trackBitmapOffset + 1]) << 8
-            bitmap |= UInt32(diskData[trackBitmapOffset + 2]) << 16
-            bitmap |= UInt32(diskData[trackBitmapOffset + 3]) << 24
+            // Byte 0 holds sectors F-8 and byte 1 holds sectors 7-0, so as a
+            // big-endian word bit N is sector N. Bytes 2-3 are unused.
+            var bitmap = UInt32(diskData[trackBitmapOffset]) << 8
+            bitmap |= UInt32(diskData[trackBitmapOffset + 1])
             
             // Check each sector in this track
             for sector in 0..<SECTORS_PER_TRACK {
                 let mask: UInt32 = 1 << sector
                 
-                if (bitmap & mask) != 0 {
+                if (bitmap & mask) != 0 && !inUse.contains(track * SECTORS_PER_TRACK + sector) {
                     // Sector is free!
                     allocatedSectors.append((track, sector))
                     
@@ -259,10 +293,8 @@ class DOS33Writer {
                     
                     // Write updated bitmap back to NSMutableData
                     let bytes = diskData.mutableBytes.assumingMemoryBound(to: UInt8.self)
-                    bytes[trackBitmapOffset] = UInt8(bitmap & 0xFF)
-                    bytes[trackBitmapOffset + 1] = UInt8((bitmap >> 8) & 0xFF)
-                    bytes[trackBitmapOffset + 2] = UInt8((bitmap >> 16) & 0xFF)
-                    bytes[trackBitmapOffset + 3] = UInt8((bitmap >> 24) & 0xFF)
+                    bytes[trackBitmapOffset] = UInt8((bitmap >> 8) & 0xFF)
+                    bytes[trackBitmapOffset + 1] = UInt8(bitmap & 0xFF)
                     
                     if allocatedSectors.count >= sectorCount {
                         return allocatedSectors
@@ -287,21 +319,19 @@ class DOS33Writer {
             
             let trackBitmapOffset = bitmapOffset + (sector.track * 4)
             
-            // Read current bitmap for this track
-            var bitmap = UInt32(bytes[trackBitmapOffset])
-            bitmap |= UInt32(bytes[trackBitmapOffset + 1]) << 8
-            bitmap |= UInt32(bytes[trackBitmapOffset + 2]) << 16
-            bitmap |= UInt32(bytes[trackBitmapOffset + 3]) << 24
+            guard trackBitmapOffset + 1 < diskData.length else { continue }
+            
+            // Read current bitmap for this track (big-endian word, bit N = sector N)
+            var bitmap = UInt32(bytes[trackBitmapOffset]) << 8
+            bitmap |= UInt32(bytes[trackBitmapOffset + 1])
             
             // Set bit to mark sector as free
             let mask: UInt32 = 1 << sector.sector
             bitmap |= mask
             
             // Write updated bitmap back
-            bytes[trackBitmapOffset] = UInt8(bitmap & 0xFF)
-            bytes[trackBitmapOffset + 1] = UInt8((bitmap >> 8) & 0xFF)
-            bytes[trackBitmapOffset + 2] = UInt8((bitmap >> 16) & 0xFF)
-            bytes[trackBitmapOffset + 3] = UInt8((bitmap >> 24) & 0xFF)
+            bytes[trackBitmapOffset] = UInt8((bitmap >> 8) & 0xFF)
+            bytes[trackBitmapOffset + 1] = UInt8(bitmap & 0xFF)
         }
         
         print("   🔓 Freed \(sectors.count) sectors in VTOC bitmap")
@@ -336,8 +366,8 @@ class DOS33Writer {
                 let dataTrack = Int(diskData[pairOffset])
                 let dataSector = Int(diskData[pairOffset + 1])
                 
-                // Track 0 means end of sector list
-                if dataTrack == 0 { break }
+                // Track 0 marks an unused pair; a random-access file can have holes
+                if dataTrack == 0 { continue }
                 
                 // Validate sector
                 if dataTrack < TRACKS && dataSector < SECTORS_PER_TRACK {
@@ -389,7 +419,9 @@ class DOS33Writer {
             }
             
             // Write sector offset (for large files with multiple T/S lists)
-            bytes[tsListOffset + 0x05] = UInt8(tsListIdx * maxPairsPerSector)
+            let sectorBase = tsListIdx * maxPairsPerSector
+            bytes[tsListOffset + 0x05] = UInt8(sectorBase & 0xFF)
+            bytes[tsListOffset + 0x06] = UInt8((sectorBase >> 8) & 0xFF)
             
             // Write T/S pairs
             var pairIndex = 0
@@ -413,12 +445,22 @@ class DOS33Writer {
     /// Add a file to a DOS 3.3 disk image
     /// - Parameter fileType: ProDOS file type (will be converted to DOS 3.3 automatically)
     /// - Parameter auxType: ProDOS aux type (used for conversion)
-    func addFile(diskImagePath: URL, fileName: String, fileData: Data, fileType: UInt8, auxType: UInt16 = 0, locked: Bool = false, completion: @escaping (Bool, String) -> Void) {
+    func addFile(diskImagePath: URL, fileName: String, fileData contents: Data, fileType: UInt8, auxType: UInt16 = 0, locked: Bool = false, completion: @escaping (Bool, String) -> Void) {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 // Convert ProDOS file type to DOS 3.3 file type
                 let dos33FileType = DiskImageParser.convertProDOSToDOS33FileType(fileType, auxType: auxType)
+                
+                // Binary and BASIC files are stored with an address/length header,
+                // and that length is a 16-bit field
+                if [0x01, 0x02, 0x04].contains(dos33FileType) && contents.count > 0xFFFF {
+                    DispatchQueue.main.async {
+                        completion(false, "File is too large for a DOS 3.3 binary or BASIC file (64 KB maximum)")
+                    }
+                    return
+                }
+                let fileData = DiskImageParser.addDOS33Header(contents, dos33Type: dos33FileType, loadAddress: auxType)
                 
                 print("📝 DOS 3.3 Write: Adding file '\(fileName)'")
                 print("   FileType conversion: ProDOS $\(String(format: "%02X", fileType)) → DOS 3.3 $\(String(format: "%02X", dos33FileType))")
@@ -499,7 +541,7 @@ class DOS33Writer {
                 
                 // Write file data to sectors
                 var dataOffset = 0
-                for (idx, sector) in dataSectors.enumerated() {
+                for sector in dataSectors {
                     let sectorOffset = self.offset(track: sector.track, sector: sector.sector)
                     let remainingData = fileData.count - dataOffset
                     let bytesToWrite = min(self.SECTOR_SIZE, remainingData)
@@ -511,7 +553,7 @@ class DOS33Writer {
                     
                     if bytesToWrite > 0 {
                         fileData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-                            memcpy(bytes + sectorOffset, ptr.baseAddress! + dataOffset, bytesToWrite)
+                            _ = memcpy(bytes + sectorOffset, ptr.baseAddress! + dataOffset, bytesToWrite)
                         }
                         dataOffset += bytesToWrite
                     }
@@ -563,9 +605,9 @@ class DOS33Writer {
                     bytes[entryOffset + 0x03 + i] = asciiValue | 0x80  // Set high bit
                 }
                 
-                // Write file size in sectors (little-endian)
-                bytes[entryOffset + 0x21] = UInt8(sectorsNeeded & 0xFF)
-                bytes[entryOffset + 0x22] = UInt8((sectorsNeeded >> 8) & 0xFF)
+                // Write file size in sectors, T/S list sectors included (little-endian)
+                bytes[entryOffset + 0x21] = UInt8(totalSectorsNeeded & 0xFF)
+                bytes[entryOffset + 0x22] = UInt8((totalSectorsNeeded >> 8) & 0xFF)
                 
                 print("✅ Wrote catalog entry: \(sanitizedName.trimmingCharacters(in: .whitespaces))")
                 
@@ -665,7 +707,8 @@ class DOS33Writer {
     func fileExists(_ diskData: Data, fileName: String) -> Bool {
         guard let vtocInfo = readVTOC(diskData) else { return false }
         
-        let searchName = sanitizeDOS33Filename(fileName).uppercased()
+        // Names are stored space-padded; compare without the padding
+        let searchName = sanitizeDOS33Filename(fileName).trimmingCharacters(in: .whitespaces).uppercased()
         var currentTrack = vtocInfo.catalogTrack
         var currentSector = vtocInfo.catalogSector
         var visitedSectors = Set<String>()
@@ -689,9 +732,10 @@ class DOS33Writer {
                 var entryName = ""
                 for i in 0..<30 {
                     let char = diskData[entryOffset + 0x03 + i] & 0x7F
-                    if char == 0x00 || char == 0x20 { break }
+                    if char == 0x00 { break }
                     entryName.append(Character(UnicodeScalar(char)))
                 }
+                entryName = entryName.trimmingCharacters(in: .whitespaces)
                 
                 if entryName.uppercased() == searchName {
                     return true

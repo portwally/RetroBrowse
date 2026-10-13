@@ -12,8 +12,9 @@ import Foundation
 
 enum NuFXConstants {
     // Archive signatures
-    static let MASTER_SIGNATURE: [UInt8] = [0x4E, 0x75, 0x46, 0x69, 0x6C, 0x65]  // "NuFile"
-    static let RECORD_SIGNATURE: [UInt8] = [0x4E, 0x75, 0x46, 0x58]  // "NuFX"
+    // Both signatures alternate low and high ASCII
+    static let MASTER_SIGNATURE: [UInt8] = [0x4E, 0xF5, 0x46, 0xE9, 0x6C, 0xE5]  // "NuFile"
+    static let RECORD_SIGNATURE: [UInt8] = [0x4E, 0xF5, 0x46, 0xD8]  // "NuFX"
 
     // Header sizes
     static let MASTER_HEADER_SIZE = 48
@@ -192,31 +193,23 @@ struct NuFXRecord {
         let modificationDate = parseProDOSDate(data, offset: offset + 40)
         let archiveDate = parseProDOSDate(data, offset: offset + 48)
 
-        // Calculate thread array offset (after fixed header + variable option list)
-        // For version 0/1 records, attrib_count includes space for filename
-        let fixedHeaderEnd = offset + Int(attribCount) + 2  // +2 for attrib_count field itself
-
-        // Read deprecated filename from header (if present)
+        // attrib_count is the offset of the (deprecated) in-header filename. The two
+        // bytes before it hold that filename's length, and the thread headers follow it.
         var filename = ""
-        let filenameOffset = offset + Int(attribCount)  // Last 2 bytes before threads
-        if filenameOffset >= 2 && filenameOffset + 2 <= data.count {
-            let filenameLength = UInt16(data[filenameOffset - 2]) | (UInt16(data[filenameOffset - 1]) << 8)
-            if filenameLength > 0 && filenameLength <= 64 {
-                let fnStart = filenameOffset
-                let fnEnd = min(fnStart + Int(filenameLength), data.count)
-                if fnEnd > fnStart {
-                    let fnData = data[fnStart..<fnEnd]
-                    filename = String(data: fnData, encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? ""
-                }
-            }
+        let filenameOffset = offset + Int(attribCount)
+        guard attribCount >= NuFXConstants.RECORD_HEADER_MIN_SIZE, filenameOffset <= data.count else { return nil }
+        let filenameLength = Int(data[filenameOffset - 2]) | (Int(data[filenameOffset - 1]) << 8)
+        guard filenameOffset + filenameLength <= data.count else { return nil }
+        if filenameLength > 0 {
+            filename = decodeName(data[filenameOffset..<(filenameOffset + filenameLength)])
         }
 
         // Parse thread headers
         var threads: [NuFXThreadHeader] = []
-        var threadOffset = fixedHeaderEnd
+        var threadOffset = filenameOffset + filenameLength
 
         for _ in 0..<numThreads {
-            guard var thread = NuFXThreadHeader.parse(from: data, offset: threadOffset) else {
+            guard let thread = NuFXThreadHeader.parse(from: data, offset: threadOffset) else {
                 break
             }
             threadOffset += NuFXConstants.THREAD_HEADER_SIZE
@@ -234,8 +227,7 @@ struct NuFXRecord {
                 let fnStart = threads[i].fileOffset
                 let fnEnd = min(fnStart + Int(threads[i].threadEOF), data.count)
                 if fnEnd > fnStart {
-                    let fnData = data[fnStart..<fnEnd]
-                    let extracted = String(data: fnData, encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? ""
+                    let extracted = decodeName(data[fnStart..<fnEnd])
                     if !extracted.isEmpty {
                         filename = extracted
                     }
@@ -243,7 +235,7 @@ struct NuFXRecord {
             }
         }
 
-        var record = NuFXRecord(
+        let record = NuFXRecord(
             headerCRC: headerCRC,
             attribCount: attribCount,
             recordVersion: recordVersion,
@@ -263,6 +255,18 @@ struct NuFXRecord {
         )
 
         return (record, dataOffset)
+    }
+
+    /// Filenames are low ASCII, sometimes with the high bit set, padded with NULs
+    private static func decodeName(_ bytes: Data) -> String {
+        let characters = bytes.map { $0 & 0x7F }.filter { $0 >= 0x20 }
+        return String(decoding: characters, as: UTF8.self)
+    }
+
+    /// Size of the disk in a disk image thread. The thread's own EOF field is
+    /// unreliable there; the record gives the block count and block size instead.
+    var diskImageSize: Int {
+        return Int(auxType) * Int(storageType)
     }
 
     var fileTypeString: String {
@@ -362,29 +366,61 @@ class NuFXArchive {
             return Data()
         }
 
-        return try extractThread(thread)
+        return try extractThread(thread, of: record)
     }
 
+    /// Largest thread this reader will expand. NuFX holds Apple II files and
+    /// disk images; anything bigger is a damaged or hostile header.
+    static let maxThreadSize = 64 * 1024 * 1024
+
     /// Extract a specific thread's data
-    func extractThread(_ thread: NuFXThreadHeader) throws -> Data {
+    func extractThread(_ thread: NuFXThreadHeader, of record: NuFXRecord) throws -> Data {
+        guard thread.fileOffset >= 0, thread.fileOffset <= data.count else {
+            throw NuFXError.dataCorrupted
+        }
         let compData = data.subdata(in: thread.fileOffset..<min(thread.fileOffset + Int(thread.compThreadEOF), data.count))
 
+        let isSizedByRecord = thread.isDiskImage && record.diskImageSize > 0
+        let expectedSize = isSizedByRecord ? record.diskImageSize : Int(thread.threadEOF)
+        guard expectedSize <= NuFXArchive.maxThreadSize else {
+            throw NuFXError.dataCorrupted
+        }
+
+        // An empty file has no compressed stream at all
+        if expectedSize == 0 {
+            return Data()
+        }
+
+        let output: Data
         switch thread.threadFormat {
         case NuFXConstants.FORMAT_UNCOMPRESSED:
-            return compData
+            output = compData.prefix(expectedSize)
 
         case NuFXConstants.FORMAT_LZW1:
-            return try NuFXLZW.decompressLZW1(compData, expectedSize: Int(thread.threadEOF))
+            output = try NuFXLZW.decompressLZW1(compData, expectedSize: expectedSize)
 
         case NuFXConstants.FORMAT_LZW2:
-            return try NuFXLZW.decompressLZW2(compData, expectedSize: Int(thread.threadEOF))
+            output = try NuFXLZW.decompressLZW2(compData, expectedSize: expectedSize)
 
         case NuFXConstants.FORMAT_SQUEEZE:
-            return try NuFXSqueeze.decompress(compData, expectedSize: Int(thread.threadEOF))
+            output = try NuFXSqueeze.decompress(compData, expectedSize: expectedSize)
 
         default:
             throw NuFXError.unsupportedCompression
         }
+
+        guard output.count == expectedSize else {
+            throw NuFXError.decompressionFailed
+        }
+
+        // Version 3 records store a CRC of the uncompressed thread. It is not checked
+        // for disk images, whose thread EOF field is not reliable.
+        if record.recordVersion >= 3 && !thread.isDiskImage &&
+           NuFXCRC.crc16(output, initialValue: 0xFFFF) != thread.threadCRC {
+            throw NuFXError.checksumMismatch
+        }
+
+        return output
     }
 }
 
@@ -470,16 +506,12 @@ class NuFXLZW {
             offset += 3
 
             // Decompress this chunk
-            let chunkEnd = min(offset + (lzwFlag != 0 ? Int.max : rleLen), data.count)
             var chunkData: Data
 
             if lzwFlag != 0 {
                 // LZW compressed
-                let (decompressed, bytesUsed) = try decompressLZWChunk(
-                    Data(data[offset..<data.count]),
-                    maxOutput: CHUNK_SIZE,
-                    clearTable: true  // LZW/1 clears table each chunk
-                )
+                // LZW/1 starts each chunk with a fresh table and yields rleLen bytes
+                let (decompressed, bytesUsed) = try LZWDecompressor().decompress(data, from: offset, maxOutput: rleLen)
                 chunkData = decompressed
                 offset += bytesUsed
             } else if rleLen == CHUNK_SIZE {
@@ -519,7 +551,7 @@ class NuFXLZW {
         offset = 2
 
         // LZW/2 maintains table across chunks
-        var lzwState = LZWDecompressor()
+        let lzwState = LZWDecompressor()
 
         while output.count < expectedSize && offset < data.count {
             // Read chunk header (2 bytes)
@@ -531,6 +563,9 @@ class NuFXLZW {
             let lzwFlag = (header & 0x8000) != 0
             let rleLen = header & 0x7FFF
 
+            // A chunk stored without LZW starts the table over
+            if !lzwFlag { lzwState.reset() }
+
             var chunkData: Data
 
             if lzwFlag {
@@ -539,10 +574,7 @@ class NuFXLZW {
                 offset += 2
 
                 // LZW compressed
-                let (decompressed, bytesUsed) = try lzwState.decompress(
-                    Data(data[offset..<data.count]),
-                    maxOutput: rleLen
-                )
+                let (decompressed, bytesUsed) = try lzwState.decompress(data, from: offset, maxOutput: rleLen)
                 chunkData = decompressed
                 offset += bytesUsed
             } else if rleLen == CHUNK_SIZE {
@@ -566,15 +598,6 @@ class NuFXLZW {
         }
 
         return output
-    }
-
-    /// Decompress a single LZW chunk
-    private static func decompressLZWChunk(_ data: Data, maxOutput: Int, clearTable: Bool) throws -> (Data, Int) {
-        var decompressor = LZWDecompressor()
-        if clearTable {
-            decompressor.reset()
-        }
-        return try decompressor.decompress(data, maxOutput: maxOutput)
     }
 
     /// Expand RLE encoded data
@@ -618,6 +641,8 @@ class NuFXLZW {
         private var table: [[UInt8]] = []
         private var codeSize = LZW_START_BITS
         private var nextCode = LZW_FIRST_CODE
+        // The previous code's string; LZW/2 carries it from one chunk to the next
+        private var prevEntry: [UInt8]? = nil
 
         init() {
             reset()
@@ -631,14 +656,15 @@ class NuFXLZW {
             table.append([])  // 257 = unused
             codeSize = LZW_START_BITS
             nextCode = LZW_FIRST_CODE
+            prevEntry = nil
         }
 
-        func decompress(_ data: Data, maxOutput: Int) throws -> (Data, Int) {
+        /// Decodes one chunk starting at `start`. Returns the output and the number of input bytes used.
+        func decompress(_ data: Data, from start: Int, maxOutput: Int) throws -> (Data, Int) {
             var output = Data()
             var bitBuffer: UInt32 = 0
             var bitsInBuffer = 0
-            var dataOffset = 0
-            var prevEntry: [UInt8]? = nil
+            var dataOffset = start
 
             while output.count < maxOutput && dataOffset < data.count {
                 // Read bits into buffer
@@ -661,7 +687,6 @@ class NuFXLZW {
                 // Handle table clear
                 if code == NuFXLZW.LZW_TABLE_CLEAR {
                     reset()
-                    prevEntry = nil
                     continue
                 }
 
@@ -691,8 +716,8 @@ class NuFXLZW {
                         }
                         nextCode += 1
 
-                        // Increase code size if needed (early change)
-                        if nextCode >= (1 << codeSize) && codeSize < NuFXLZW.LZW_MAX_BITS {
+                        // The code width grows one entry before the table fills it
+                        if nextCode + 1 >= (1 << codeSize) && codeSize < NuFXLZW.LZW_MAX_BITS {
                             codeSize += 1
                         }
                     }
@@ -701,7 +726,7 @@ class NuFXLZW {
                 prevEntry = entry
             }
 
-            return (output.prefix(maxOutput), dataOffset)
+            return (output.prefix(maxOutput), dataOffset - start)
         }
     }
 }
@@ -747,12 +772,14 @@ class NuFXSqueeze {
             offset += 4
         }
 
-        // Decompress using Huffman tree
-        var output = Data()
+        // Decompress using Huffman tree. The decoded stream is still run-length
+        // encoded, and a literal $90 takes two bytes, so allow twice the output size.
+        var huffmanOutput = Data()
         var bitBuffer: UInt32 = 0
         var bitsInBuffer = 0
+        let squeezeEOF = 256
 
-        while output.count < expectedSize {
+        while huffmanOutput.count < expectedSize * 2 {
             var node = 0
 
             // Traverse tree
@@ -780,13 +807,31 @@ class NuFXSqueeze {
 
             if node < 0 {
                 // Leaf node - extract character
-                let char = UInt8(-(node + 1))
-                if char == 0x90 {  // End of data marker
-                    break
-                }
-                output.append(char)
+                let value = -(node + 1)
+                if value == squeezeEOF { break }
+                guard value < squeezeEOF else { throw NuFXError.decompressionFailed }
+                huffmanOutput.append(UInt8(value))
             } else {
                 break
+            }
+        }
+
+        // Expand runs: <byte> $90 <count> repeats <byte> count times in total; $90 $00 is a literal $90
+        var output = Data()
+        var i = 0
+        while i < huffmanOutput.count && output.count < expectedSize {
+            let byte = huffmanOutput[i]
+            i += 1
+            guard byte == 0x90, i < huffmanOutput.count else {
+                output.append(byte)
+                continue
+            }
+            let count = Int(huffmanOutput[i])
+            i += 1
+            if count == 0 {
+                output.append(0x90)
+            } else if let last = output.last, count > 1 {
+                output.append(contentsOf: [UInt8](repeating: last, count: min(count - 1, expectedSize - output.count)))
             }
         }
 
@@ -1029,7 +1074,7 @@ class NuFXWriter {
 
         // Filename thread
         let filenameData = file.filename.data(using: .ascii) ?? Data()
-        var filenameThread = createThreadHeader(
+        let filenameThread = createThreadHeader(
             threadClass: NuFXConstants.THREAD_CLASS_FILENAME,
             threadFormat: NuFXConstants.FORMAT_UNCOMPRESSED,
             threadKind: NuFXConstants.THREAD_KIND_FILENAME,

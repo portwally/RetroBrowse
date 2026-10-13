@@ -37,7 +37,18 @@ struct DiskCatalogEntry: Identifiable, Codable {
     // Resource fork data (for extended files, storage type 5)
     let resourceForkData: Data?
 
-    init(id: UUID = UUID(), name: String, fileType: UInt8, fileTypeString: String, auxType: UInt16 = 0, size: Int, blocks: Int?, loadAddress: Int?, length: Int?, data: Data, isImage: Bool, isDirectory: Bool, children: [DiskCatalogEntry]?, modificationDate: String? = nil, creationDate: String? = nil, storageType: UInt8? = nil, keyPointer: Int? = nil, accessFlags: UInt8? = nil, version: UInt8? = nil, minVersion: UInt8? = nil, headerPointer: Int? = nil, resourceForkData: Data? = nil) {
+    // Path of the directory that holds this entry, e.g. "/" or "/SYSTEM/"
+    let parentPath: String
+
+    // DOS 3.3 lock flag
+    let isLocked: Bool
+
+    /// Path of this entry when it is a directory, e.g. "/SYSTEM/"
+    var directoryPath: String {
+        return parentPath + name + "/"
+    }
+
+    init(id: UUID = UUID(), name: String, fileType: UInt8, fileTypeString: String, auxType: UInt16 = 0, size: Int, blocks: Int?, loadAddress: Int?, length: Int?, data: Data, isImage: Bool, isDirectory: Bool, children: [DiskCatalogEntry]?, modificationDate: String? = nil, creationDate: String? = nil, storageType: UInt8? = nil, keyPointer: Int? = nil, accessFlags: UInt8? = nil, version: UInt8? = nil, minVersion: UInt8? = nil, headerPointer: Int? = nil, resourceForkData: Data? = nil, parentPath: String = "/", isLocked: Bool = false) {
         self.id = id
         self.name = name
         self.fileType = fileType
@@ -60,6 +71,8 @@ struct DiskCatalogEntry: Identifiable, Codable {
         self.minVersion = minVersion
         self.headerPointer = headerPointer
         self.resourceForkData = resourceForkData
+        self.parentPath = parentPath
+        self.isLocked = isLocked
     }
 
     // MARK: - Storage Type Descriptions
@@ -173,5 +186,88 @@ struct DiskCatalog: Codable {
             }
         }
         return result
+    }
+}
+
+// MARK: - Archive Catalogs
+
+/// A file taken out of an archive, before it is placed in a catalog
+struct ArchiveFile {
+    /// Name, or a partial pathname using `separator`
+    let path: String
+    let separator: Character
+    let fileType: UInt8
+    let auxType: UInt16
+    let data: Data
+    let resourceFork: Data?
+}
+
+extension DiskCatalog {
+    /// Builds a catalog from the files of an archive, turning pathnames into directories
+    static func fromArchive(name: String, format: String, files: [ArchiveFile]) -> DiskCatalog {
+        let items = files.map { file in
+            (components: file.path.split(separator: file.separator).map(String.init), file: file)
+        }.filter { !$0.components.isEmpty }
+        
+        return DiskCatalog(
+            diskName: name,
+            diskFormat: format,
+            diskSize: files.reduce(0) { $0 + $1.data.count },
+            entries: archiveEntries(items, parentPath: "/")
+        )
+    }
+    
+    private static func archiveEntries(_ items: [(components: [String], file: ArchiveFile)], parentPath: String) -> [DiskCatalogEntry] {
+        var entries: [DiskCatalogEntry] = []
+        var directoryNames: [String] = []
+        var directoryItems: [String: [(components: [String], file: ArchiveFile)]] = [:]
+        
+        for item in items {
+            let name = item.components[0]
+            let file = item.file
+            
+            if item.components.count > 1 {
+                if directoryItems[name] == nil { directoryNames.append(name) }
+                directoryItems[name, default: []].append((Array(item.components.dropFirst()), file))
+                continue
+            }
+            
+            entries.append(DiskCatalogEntry(
+                name: name,
+                fileType: file.fileType,
+                fileTypeString: ProDOSFileTypeInfo.getFileTypeInfo(fileType: file.fileType, auxType: file.auxType).shortName,
+                auxType: file.auxType,
+                size: file.data.count,
+                blocks: nil,
+                loadAddress: Int(file.auxType),
+                length: file.data.count,
+                data: file.data,
+                isImage: [0x08, 0xC0, 0xC1].contains(file.fileType),
+                isDirectory: false,
+                children: nil,
+                resourceForkData: file.resourceFork,
+                parentPath: parentPath
+            ))
+        }
+        
+        for name in directoryNames {
+            let children = archiveEntries(directoryItems[name] ?? [], parentPath: parentPath + name + "/")
+            entries.append(DiskCatalogEntry(
+                name: name,
+                fileType: 0x0F,
+                fileTypeString: "DIR",
+                size: 0,
+                blocks: nil,
+                loadAddress: nil,
+                length: nil,
+                data: Data(),
+                isImage: false,
+                isDirectory: true,
+                children: children,
+                parentPath: parentPath
+            ))
+        }
+        
+        return entries
     }
 }

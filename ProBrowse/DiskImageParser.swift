@@ -13,11 +13,7 @@ class DiskImageParser {
     
     // MARK: - DOS to ProDOS Mapping Constants
     
-    // Track 0 (Directory): Uses countdown mapping for the Volume Directory
-    // This "countdown" mapping: ProDOS logical sector N -> DOS physical sector (15-N)
-    private static let dosToProDOSMapTrack0: [Int] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
-    
-    // Track 1+ (Data): Uses standard DOS 3.3 logical order for file data blocks
+    // DOS 3.3 logical sectors holding each ProDOS block. The same map applies to every track.
     // Based on DOS 3.3 Physical-to-Logical mapping from Apple II documentation:
     // Physical: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15
     // DOS Log:  0, 7,14, 6,13, 5,12, 4,11, 3,10, 2, 9, 1, 8,15
@@ -33,6 +29,23 @@ class DiskImageParser {
     // Block 7: Phys 13+15 -> DOS Log 1+15
     private static let dosToProDOSMapData: [Int] = [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 15]
 
+    /// Rearranges a 5.25" image stored in ProDOS block order into DOS sector order.
+    /// Returns nil unless the image is a whole number of 16-sector tracks.
+    static func dosOrdered(fromProDOSOrder data: Data) -> Data? {
+        let sectorSize = 256
+        let trackSize = 16 * sectorSize
+        guard data.count == 35 * trackSize else { return nil }
+        
+        var result = Data(count: data.count)
+        for half in 0..<(data.count / sectorSize) {
+            // Each half block of the source goes to the DOS sector the map names
+            let track = half / 16
+            let target = track * trackSize + dosToProDOSMapData[half % 16] * sectorSize
+            result.replaceSubrange(target..<(target + sectorSize), with: data.subdata(in: (half * sectorSize)..<((half + 1) * sectorSize)))
+        }
+        return result
+    }
+    
     // MARK: - Date/Time Parsing
     
     private static func decodeProDOSDateTime(_ dateBytes: [UInt8], _ timeBytes: [UInt8]) -> String? {
@@ -43,7 +56,10 @@ class DiskImageParser {
         // Check if date is zero (unset)
         guard dateWord != 0 else { return nil }
         
-        let year = Int((dateWord >> 9) & 0x7F) + 1900
+        // Two-digit year: 0-39 is 2000-2039, 40-99 is 1940-1999.
+        // Values of 100 and up come from tools that stored (year - 1900).
+        let rawYear = Int((dateWord >> 9) & 0x7F)
+        let year = rawYear < 40 ? 2000 + rawYear : 1900 + rawYear
         let month = Int((dateWord >> 5) & 0x0F)
         let day = Int(dateWord & 0x1F)
         
@@ -57,8 +73,8 @@ class DiskImageParser {
         var minute = 0
         if timeBytes.count >= 2 {
             let timeWord = UInt16(timeBytes[0]) | (UInt16(timeBytes[1]) << 8)
-            hour = Int(timeWord & 0xFF)
-            minute = Int((timeWord >> 8) & 0xFF)
+            minute = Int(timeWord & 0xFF)
+            hour = Int((timeWord >> 8) & 0xFF)
             
             // Validate time (some disks have invalid time data)
             if hour >= 24 || minute >= 60 {
@@ -75,7 +91,7 @@ class DiskImageParser {
         components.hour = hour
         components.minute = minute
         
-        guard let date = Calendar.current.date(from: components) else {
+        guard let date = Calendar(identifier: .gregorian).date(from: components) else {
             return nil
         }
         
@@ -125,6 +141,52 @@ class DiskImageParser {
         }
     }
     
+    /// Removes the header DOS 3.3 stores in front of a file's contents and trims the
+    /// sector padding behind them. Returns the contents and the load address, if the type has one.
+    static func stripDOS33Header(_ raw: Data, dos33Type: UInt8) -> (contents: Data, loadAddress: UInt16?) {
+        func word(_ offset: Int) -> Int {
+            return Int(raw[offset]) | (Int(raw[offset + 1]) << 8)
+        }
+        
+        switch dos33Type {
+        case 0x04 where raw.count >= 4:
+            // Binary: load address, length, data
+            let length = word(2)
+            let end = (length > 0 && 4 + length <= raw.count) ? 4 + length : raw.count
+            return (raw.subdata(in: 4..<end), UInt16(word(0)))
+            
+        case 0x01 where raw.count >= 2, 0x02 where raw.count >= 2:
+            // Integer BASIC and Applesoft: length, program
+            let length = word(0)
+            let end = (length > 0 && 2 + length <= raw.count) ? 2 + length : raw.count
+            return (raw.subdata(in: 2..<end), dos33Type == 0x02 ? 0x0801 : nil)
+            
+        case 0x00:
+            // Text has no header; the last sector is padded with zeros
+            var end = raw.count
+            while end > 0 && raw[end - 1] == 0 { end -= 1 }
+            return (raw.prefix(end), nil)
+            
+        default:
+            return (raw, nil)
+        }
+    }
+    
+    /// Puts the DOS 3.3 header in front of a file's contents, the reverse of `stripDOS33Header`
+    static func addDOS33Header(_ contents: Data, dos33Type: UInt8, loadAddress: UInt16) -> Data {
+        let length = UInt16(truncatingIfNeeded: contents.count)
+        let lengthBytes = [UInt8(length & 0xFF), UInt8(length >> 8)]
+        
+        switch dos33Type {
+        case 0x04:
+            return Data([UInt8(loadAddress & 0xFF), UInt8(loadAddress >> 8)] + lengthBytes) + contents
+        case 0x01, 0x02:
+            return Data(lengthBytes) + contents
+        default:
+            return contents
+        }
+    }
+    
     /// Convert ProDOS file type to DOS 3.3 file type
     static func convertProDOSToDOS33FileType(_ proDOSType: UInt8, auxType: UInt16) -> UInt8 {
         switch proDOSType {
@@ -149,7 +211,7 @@ class DiskImageParser {
     // MARK: - Block Reader Helper
     
     /// Validates if a block is a valid ProDOS Volume Directory Header
-    private static func isValidProDOSVolumeHeader(_ block: Data) -> Bool {
+    static func isValidProDOSVolumeHeader(_ block: Data) -> Bool {
         guard block.count >= 512 else { return false }
         
         // Check 1: Storage Type must be 0xF (Volume Directory Header)
@@ -198,34 +260,6 @@ class DiskImageParser {
         return true
     }
     
-    /// Reads Block 2 specifically using Track 0 mapping (for format detection)
-    private static func getBlock2Track0(from data: Data) -> Data? {
-        let sectorSize = 256
-        let track = 0
-        let blockInTrack = 2
-        let trackOffset = track * 16 * sectorSize
-        
-        guard trackOffset < data.count else { return nil }
-        
-        // Block 2 in Track 0 ALWAYS uses the Track 0 (Directory) mapping
-        let mapping = dosToProDOSMapTrack0
-        
-        let lowerSectorIdx = mapping[blockInTrack * 2]
-        let upperSectorIdx = mapping[blockInTrack * 2 + 1]
-        
-        let lowerOffset = trackOffset + (lowerSectorIdx * sectorSize)
-        let upperOffset = trackOffset + (upperSectorIdx * sectorSize)
-        
-        guard lowerOffset + sectorSize <= data.count,
-              upperOffset + sectorSize <= data.count else { return nil }
-        
-        var blockData = Data()
-        blockData.append(data.subdata(in: lowerOffset..<(lowerOffset + sectorSize)))
-        blockData.append(data.subdata(in: upperOffset..<(upperOffset + sectorSize)))
-        
-        return blockData
-    }
-    
     /// Reads a 512-byte block handling both Linear (.po) and Interleaved (.dsk) formats
     private static func getBlockData(from data: Data, blockIndex: Int, isDOSOrder: Bool) -> Data? {
         let blockSize = 512
@@ -248,10 +282,7 @@ class DiskImageParser {
             
             guard trackOffset < data.count else { return nil }
             
-            // Select the appropriate mapping based on track
-            // Track 0: Directory uses countdown mapping
-            // Track 1+: Data uses standard DOS 3.3 logical order
-            let mapping = (track == 0) ? dosToProDOSMapTrack0 : dosToProDOSMapData
+            let mapping = dosToProDOSMapData
             
             // Find the two DOS sectors (Lower/Upper)
             let lowerSectorIdx = mapping[blockInTrack * 2]
@@ -301,6 +332,7 @@ class DiskImageParser {
                 print("🔍 Detected 2MG/2IMG container (header size: \(headerSize), data offset: \(dataOffset))")
                 
                 // Skip the header
+                guard dataOffset <= data.count else { return nil }
                 actualData = data.subdata(in: dataOffset..<data.count)
             }
         }
@@ -322,8 +354,8 @@ class DiskImageParser {
             }
         }
         
-        // Check DOS Order (Block 2 in Track 0 with Track 0 mapping)
-        if !detected, let block2DSK = getBlock2Track0(from: actualData) {
+        // Check DOS Order (Block 2 read through the sector interleave)
+        if !detected, let block2DSK = getBlockData(from: actualData, blockIndex: 2, isDOSOrder: true) {
             if isValidProDOSVolumeHeader(block2DSK) {
                 isDOSOrder = true
                 detected = true
@@ -357,7 +389,8 @@ class DiskImageParser {
         }
         
         // --- Step 3: Read Directory Tree ---
-        let entries = readProDOSDirectory(data: actualData, startBlock: 2, isDOSOrder: isDOSOrder)
+        var visitedBlocks = Set<Int>()
+        let entries = readProDOSDirectory(data: actualData, startBlock: 2, isDOSOrder: isDOSOrder, path: "/", visitedBlocks: &visitedBlocks)
         
         return DiskCatalog(
             diskName: volumeName.isEmpty ? diskName : volumeName,
@@ -385,7 +418,13 @@ class DiskImageParser {
         
         let entries = readDOS33Catalog(data: data, catalogTrack: catalogTrack, catalogSector: catalogSector, sectorsPerTrack: sectorsPerTrack, sectorSize: sectorSize)
         
-        if entries.isEmpty { return nil }
+        // An empty catalog is only accepted when the VTOC describes a standard
+        // 35-track, 16-sector disk; otherwise this is probably not DOS 3.3 at all
+        if entries.isEmpty {
+            let isStandardVTOC = data[vtocOffset + 0x34] == 35 && data[vtocOffset + 0x35] == 16 &&
+                                 data[vtocOffset + 0x36] == 0 && data[vtocOffset + 0x37] == 1
+            guard isStandardVTOC else { return nil }
+        }
         
         return DiskCatalog(
             diskName: diskName,
@@ -397,10 +436,13 @@ class DiskImageParser {
     
     // MARK: - ProDOS Directory Reading
     
-    private static func readProDOSDirectory(data: Data, startBlock: Int, isDOSOrder: Bool) -> [DiskCatalogEntry] {
+    /// - Parameters:
+    ///   - path: Path of this directory, e.g. "/" or "/SYSTEM/"
+    ///   - visitedBlocks: Directory blocks seen so far on the whole volume, so a damaged
+    ///     subdirectory pointer cannot loop back into a directory already read
+    private static func readProDOSDirectory(data: Data, startBlock: Int, isDOSOrder: Bool, path: String, visitedBlocks: inout Set<Int>) -> [DiskCatalogEntry] {
         var entries: [DiskCatalogEntry] = []
         var currentBlock = startBlock
-        var visitedBlocks = Set<Int>() // Safety against loops
         
         while currentBlock != 0 {
             if visitedBlocks.contains(currentBlock) { break }
@@ -441,9 +483,9 @@ class DiskImageParser {
                 let storageType = (storageTypeByte & 0xF0) >> 4
                 let nameLength = Int(storageTypeByte & 0x0F)
                 
-                // 0x00 = Deleted entry, 0xF = Volume Header (skip it for file list)
+                // 0x00 = Deleted entry, 0xE = Subdirectory Header, 0xF = Volume Header
                 if storageType == 0x00 { continue }
-                if storageType == 0x0F { continue } // Skip Volume Header entry itself
+                if storageType >= 0x0E { continue } // Skip the directory's own header entry
                 
                 // Parse Name
                 var fileName = ""
@@ -472,7 +514,7 @@ class DiskImageParser {
                 
                 if storageType == 0x0D {
                     // Subdirectory
-                    let children = readProDOSDirectory(data: data, startBlock: keyPointer, isDOSOrder: isDOSOrder)
+                    let children = readProDOSDirectory(data: data, startBlock: keyPointer, isDOSOrder: isDOSOrder, path: path + fileName + "/", visitedBlocks: &visitedBlocks)
 
                     entries.append(DiskCatalogEntry(
                         name: fileName,
@@ -494,7 +536,8 @@ class DiskImageParser {
                         accessFlags: accessFlags,
                         version: version,
                         minVersion: minVersion,
-                        headerPointer: headerPointer
+                        headerPointer: headerPointer,
+                        parentPath: path
                     ))
                 } else {
                     // File
@@ -540,7 +583,8 @@ class DiskImageParser {
                         version: version,
                         minVersion: minVersion,
                         headerPointer: headerPointer,
-                        resourceForkData: resourceForkData
+                        resourceForkData: resourceForkData,
+                        parentPath: path
                     ))
                     entriesInThisBlock += 1
                 }
@@ -697,7 +741,8 @@ class DiskImageParser {
                 var fileName = ""
                 for i in 0..<30 {
                     var char = data[entryOffset + 3 + i] & 0x7F
-                    if char == 0 || char == 0x20 { break }
+                    // Names are space-padded to 30 characters and may contain spaces
+                    if char == 0 { break }
                     if char < 0x20 { char += 0x40 }
                     if char > 0 { fileName.append(Character(UnicodeScalar(char))) }
                 }
@@ -722,7 +767,12 @@ class DiskImageParser {
                 // Validate sector count is reasonable (0 means deleted, >560 is suspicious for 140KB disk)
                 if sectorCount == 0 || sectorCount > 560 { continue }
                 
-                if let fileData = extractDOS33File(data: data, trackList: trackList, sectorList: sectorList, sectorsPerTrack: sectorsPerTrack, sectorSize: sectorSize) {
+                if let rawData = extractDOS33File(data: data, trackList: trackList, sectorList: sectorList, sectorsPerTrack: sectorsPerTrack, sectorSize: sectorSize) {
+
+                    // Entries carry ProDOS file types and bare contents, like entries from any other
+                    // disk, so the viewers and the writers treat them the same way
+                    let (fileData, loadAddress) = stripDOS33Header(rawData, dos33Type: fileType)
+                    let proDOSType = convertDOS33ToProDOSFileType(fileType)
 
                     let isGraphicsFile = (fileType == 0x04 || fileType == 0x42) && fileData.count > 8000
 
@@ -737,13 +787,13 @@ class DiskImageParser {
                     let dos33AccessFlags: UInt8 = locked ? 0x01 : 0xE3  // read-only vs full access
 
                     entries.append(DiskCatalogEntry(
-                        name: fileName + (locked ? " 🔒" : ""),
-                        fileType: fileType,
+                        name: fileName,
+                        fileType: proDOSType.fileType,
                         fileTypeString: fileTypeString,
-                        auxType: 0,
+                        auxType: loadAddress ?? proDOSType.auxType,
                         size: displaySize,  // Use catalog sector count
                         blocks: sectorCount,
-                        loadAddress: nil,
+                        loadAddress: loadAddress.map { Int($0) },
                         length: fileData.count,  // Keep actual data length
                         data: fileData,
                         isImage: isGraphicsFile,
@@ -754,7 +804,8 @@ class DiskImageParser {
                         accessFlags: dos33AccessFlags,
                         version: nil,
                         minVersion: nil,
-                        headerPointer: nil
+                        headerPointer: nil,
+                        isLocked: locked
                     ))
                 }
             }

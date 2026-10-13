@@ -403,7 +403,8 @@ class AppleIIgsFontDecoder {
             if charIndex >= 0 && charIndex < font.locationTable.count - 1 {
                 let startX = font.locationTable[charIndex]
                 let endX = font.locationTable[charIndex + 1]
-                let charWidth = endX - startX
+                // A malformed location table can run backwards
+                let charWidth = max(0, endX - startX)
 
                 // Render character
                 for y in 0..<height {

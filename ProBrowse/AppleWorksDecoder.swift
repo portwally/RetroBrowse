@@ -245,6 +245,11 @@ class AppleWorksDecoder {
         var plainTextLines: [String] = []
         var offset = AWP_HEADER_SIZE
 
+        // AppleWorks 3.0 and later write two unused bytes before the first line record
+        if isVersion3Plus {
+            offset += 2
+        }
+
         // Current formatting state
         var isCentered = false
         var isRightJustified = false
@@ -263,7 +268,9 @@ class AppleWorksDecoder {
 
             switch lineRecCode {
             case CODE_TEXT:
-                // Text record
+                // Text record: the data byte is its length, which also covers tab rulers
+                let recordEnd = min(offset + Int(lineRecData), data.count)
+                defer { offset = recordEnd }
                 if let (line, plainText) = parseTextRecord(data: data, offset: &offset,
                                                            isCentered: isCentered,
                                                            isRightJustified: isRightJustified,
@@ -449,14 +456,12 @@ class AppleWorksDecoder {
             return String(UnicodeScalar(byte))
 
         case 0x80...0x9F:
-            // Inverse uppercase A-Z (map to normal A-Z)
-            let ascii = byte ^ 0xC0
-            return String(UnicodeScalar(ascii + 0x40))
+            // Inverse uppercase @, A-Z (map to normal)
+            return String(UnicodeScalar(byte - 0x40))
 
         case 0xA0...0xBF:
             // Inverse symbols/numbers (map to normal)
-            let ascii = byte ^ 0xC0
-            return String(UnicodeScalar(ascii + 0x20))
+            return String(UnicodeScalar(byte - 0x80))
 
         case 0xC0...0xDF:
             // MouseText - map to approximations
@@ -464,8 +469,7 @@ class AppleWorksDecoder {
 
         case 0xE0...0xFF:
             // Inverse lowercase (map to normal a-z)
-            let ascii = byte ^ 0xC0
-            return String(UnicodeScalar(ascii + 0x60))
+            return String(UnicodeScalar(byte - 0x80))
 
         default:
             return "?"
@@ -537,9 +541,9 @@ class AppleWorksDecoder {
         var colorPalette: [GWPColor] = []
         for i in 0..<16 {
             let colorWord = readWord(data, at: GWP_PALETTE_OFFSET + i * 2)
-            let blue = UInt8((colorWord >> 8) & 0x0F)
+            let red = UInt8((colorWord >> 8) & 0x0F)
             let green = UInt8((colorWord >> 4) & 0x0F)
-            let red = UInt8(colorWord & 0x0F)
+            let blue = UInt8(colorWord & 0x0F)
             colorPalette.append(GWPColor(red: red, green: green, blue: blue))
         }
 

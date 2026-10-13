@@ -26,6 +26,13 @@ class DiskPaneViewModel: ObservableObject {
     @Published var currentDirectory: DiskCatalogEntry?
     @Published var navigationPath: [DiskCatalogEntry] = []
     
+    /// True when the catalog came from an image extracted out of an archive
+    /// (.shk, .bny, .gz, .zip). The file on disk is then not a raw image and must not be written to.
+    @Published private(set) var isArchiveBacked = false
+    
+    /// Size of the opened file on disk, for the pane header
+    @Published private(set) var diskImageFileSize: Int?
+    
     private var lastSelectedEntry: DiskCatalogEntry?
     
     var isAllSelected: Bool {
@@ -81,6 +88,10 @@ class DiskPaneViewModel: ObservableObject {
     
     // MARK: - Load Disk Image
     
+    /// File extensions that open as a disk image or archive rather than being imported as a file
+    static let openableExtensions = ["po", "2mg", "hdv", "dsk", "do", "vol",
+                                     "shk", "sdk", "bxy", "bny", "bqy", "bii", "gz", "zip"]
+    
     func loadDiskImage(from url: URL) {
         guard url.startAccessingSecurityScopedResource() else {
             print("Failed to access security scoped resource")
@@ -91,10 +102,8 @@ class DiskPaneViewModel: ObservableObject {
 
         do {
             var originalData = try Data(contentsOf: url)
-            self.diskImagePath = url
-
-            // Reset navigation
-            navigateToRoot()
+            var extractedFromArchive = false
+            var extractedFromNuFX = false
 
             let ext = url.pathExtension.lowercased()
             let isDSK = ext == "dsk"
@@ -109,6 +118,7 @@ class DiskPaneViewModel: ObservableObject {
                     print("📦 Detected Binary II archive: \(url.lastPathComponent)")
 
                     let archive = BinaryIIArchive(data: originalData)
+                    var foundDiskImage = false
                     do {
                         try archive.parse()
                         print("   Found \(archive.entries.count) entries")
@@ -122,12 +132,25 @@ class DiskPaneViewModel: ObservableObject {
                                    entry.filename.lowercased().hasSuffix(".po") {
                                     print("✅ Extracted disk image: \(entry.filename) (\(extracted.count) bytes)")
                                     originalData = extracted
+                                    extractedFromArchive = true
+                                    foundDiskImage = true
                                     break
                                 }
                             }
                         }
                     } catch {
                         print("❌ Binary II extraction failed: \(error)")
+                    }
+                    
+                    // No disk image inside: show the archived files themselves
+                    if !foundDiskImage && !archive.entries.isEmpty {
+                        let files = archive.entries.filter { $0.storageType != 0x0D }.map { entry in
+                            ArchiveFile(path: entry.filename, separator: "/", fileType: entry.fileType, auxType: entry.auxType,
+                                        data: archive.extractData(for: entry) ?? Data(), resourceFork: nil)
+                        }
+                        finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: "Binary II Archive", files: files),
+                                      from: url, isArchiveBacked: true)
+                        return
                     }
                 }
             }
@@ -139,24 +162,30 @@ class DiskPaneViewModel: ObservableObject {
 
                 // Parse the archive
                 let archive = NuFXArchive(data: originalData)
+                var foundDiskImage = false
                 do {
                     try archive.parse()
 
                     // Find disk image or first data file
                     for record in archive.records {
                         if let diskThread = record.threads.first(where: { $0.isDiskImage }),
-                           let extracted = try? archive.extractThread(diskThread) {
+                           let extracted = try? archive.extractThread(diskThread, of: record) {
                             print("✅ Extracted disk image: \(record.filename) (\(extracted.count) bytes)")
                             originalData = extracted
+                            extractedFromArchive = true
+                            foundDiskImage = true
+                            extractedFromNuFX = true
                             break
                         } else if let dataThread = record.dataForkThread,
                                   record.threads.first(where: { $0.isDiskImage }) == nil {
                             // No disk image thread, but has data - try extracting first file
-                            if let extracted = try? archive.extractThread(dataThread) {
+                            if let extracted = try? archive.extractThread(dataThread, of: record) {
                                 // Check if it looks like a disk image (140K, 800K, etc.)
                                 if [143360, 819200, 163840].contains(extracted.count) {
                                     print("✅ Extracted data as disk image: \(record.filename) (\(extracted.count) bytes)")
                                     originalData = extracted
+                                    extractedFromArchive = true
+                                    foundDiskImage = true
                                     break
                                 }
                             }
@@ -169,6 +198,33 @@ class DiskPaneViewModel: ObservableObject {
                 } catch {
                     print("❌ NuFX extraction failed: \(error)")
                 }
+                
+                // No disk image inside: show the archived files themselves
+                if !foundDiskImage && !archive.records.isEmpty {
+                    var files: [ArchiveFile] = []
+                    var unreadable: [String] = []
+                    for record in archive.records {
+                        guard let data = try? archive.extractData(for: record) else {
+                            unreadable.append(record.filename)
+                            continue
+                        }
+                        let resourceFork = record.resourceForkThread.flatMap { try? archive.extractThread($0, of: record) }
+                        let separator = record.separatorChar & 0x7F
+                        files.append(ArchiveFile(path: record.filename,
+                                                 separator: Character(UnicodeScalar(separator < 0x20 ? 0x2F : separator)),
+                                                 fileType: UInt8(truncatingIfNeeded: record.fileType),
+                                                 auxType: UInt16(truncatingIfNeeded: record.auxType),
+                                                 data: data, resourceFork: resourceFork))
+                    }
+                    guard !files.isEmpty else {
+                        showError("Could Not Open Archive", "Nothing in \(url.lastPathComponent) could be extracted. The archive may be damaged.")
+                        return
+                    }
+                    finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: "ShrinkIt Archive", files: files),
+                                  from: url, isArchiveBacked: true)
+                    reportFailures("Some Files Could Not Be Extracted", unreadable)
+                    return
+                }
             }
 
             // Check for gzip compressed files (.gz)
@@ -177,6 +233,7 @@ class DiskPaneViewModel: ObservableObject {
                 if let decompressed = GzipArchive.decompress(originalData) {
                     print("✅ Decompressed gzip: \(decompressed.count) bytes")
                     originalData = decompressed
+                    extractedFromArchive = true
                 } else {
                     print("❌ Gzip decompression failed")
                 }
@@ -200,6 +257,7 @@ class DiskPaneViewModel: ObservableObject {
                                entry.filename.lowercased().hasSuffix(".do") {
                                 print("✅ Extracted disk image: \(entry.filename) (\(extracted.count) bytes)")
                                 originalData = extracted
+                                extractedFromArchive = true
                                 break
                             }
                         }
@@ -212,8 +270,7 @@ class DiskPaneViewModel: ObservableObject {
                 print("📀 Loading .vol file: \(url.lastPathComponent)")
                 if let catalog = try? UCSDPascalParser.parseUCSD(data: originalData, diskName: url.lastPathComponent) {
                     print("✅ Parsed as UCSD Pascal")
-                    self.catalog = catalog
-                    self.selectedEntries = []
+                    finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                     return
                 }
             }
@@ -221,8 +278,7 @@ class DiskPaneViewModel: ObservableObject {
             // For .po, .2mg, .hdv, .woz - try directly as ProDOS
             if !isDSK && !isDO && !isVOL {
                 if let catalog = try? DiskImageParser.parseProDOS(data: originalData, diskName: url.lastPathComponent) {
-                    self.catalog = catalog
-                    self.selectedEntries = []
+                    finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                     return
                 }
             }
@@ -234,42 +290,155 @@ class DiskPaneViewModel: ObservableObject {
                 // Try ProDOS first
                 if let catalog = try? DiskImageParser.parseProDOS(data: originalData, diskName: url.lastPathComponent) {
                     print("✅ Parsed as ProDOS")
-                    self.catalog = catalog
-                    self.selectedEntries = []
+                    finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                     return
                 }
                 
                 // Try UCSD Pascal second
                 if let catalog = try? UCSDPascalParser.parseUCSD(data: originalData, diskName: url.lastPathComponent) {
                     print("✅ Parsed as UCSD Pascal")
-                    self.catalog = catalog
-                    self.selectedEntries = []
+                    finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                     return
                 }
                 
                 // Try DOS 3.3 last
                 if let catalog = try? DiskImageParser.parseDOS33(data: originalData, diskName: url.lastPathComponent) {
                     print("✅ Parsed as DOS 3.3")
-                    self.catalog = catalog
-                    self.selectedEntries = []
+                    finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                     return
                 }
                 
                 print("❌ Could not parse .dsk file")
             }
             
+            // ShrinkIt stores a disk in ProDOS block order. A Pascal volume reads as is;
+            // a DOS 3.3 disk needs its sectors put back in DOS order first.
+            if extractedFromNuFX {
+                if let catalog = try? UCSDPascalParser.parseUCSD(data: originalData, diskName: url.lastPathComponent) {
+                    finishLoading(catalog, from: url, isArchiveBacked: true)
+                    return
+                }
+                if let reordered = DiskImageParser.dosOrdered(fromProDOSOrder: originalData),
+                   let catalog = try? DiskImageParser.parseDOS33(data: reordered, diskName: url.lastPathComponent) {
+                    finishLoading(catalog, from: url, isArchiveBacked: true)
+                    return
+                }
+            }
+            
             // Fallback: Try as DOS 3.3
             if let catalog = try? DiskImageParser.parseDOS33(data: originalData, diskName: url.lastPathComponent) {
-                self.catalog = catalog
-                self.selectedEntries = []
+                finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
                 return
             }
             
             print("Unknown disk format")
+            showError("Could Not Open Disk Image",
+                      "\(url.lastPathComponent) is not a disk image or archive that ProBrowse can read.")
             
         } catch {
             print("Error loading disk image: \(error)")
+            showError("Could Not Open Disk Image", error.localizedDescription)
         }
+    }
+    
+    /// Adopts a successfully parsed catalog. Nothing is changed when a load fails,
+    /// so the path and the catalog always describe the same file.
+    private func finishLoading(_ newCatalog: DiskCatalog, from url: URL, isArchiveBacked: Bool) {
+        // Stay in the same directory when the same image is reloaded after a change
+        let openPath = (url == diskImagePath) ? currentDirectory?.directoryPath : nil
+        
+        diskImagePath = url
+        catalog = newCatalog
+        self.isArchiveBacked = isArchiveBacked
+        diskImageFileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        lastSelectedEntry = nil
+        navigateToRoot()
+        
+        if let openPath = openPath, let directory = directories(alongPath: openPath).last {
+            navigateInto(directory)
+        }
+    }
+    
+    // MARK: - Write Helpers
+    
+    /// Shows an error to the user. Replaceable so the view model can be tested without a window.
+    var presentError: (_ title: String, _ message: String) -> Void = { title, message in
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+    
+    private func showError(_ title: String, _ message: String) {
+        presentError(title, message)
+    }
+    
+    /// Asks the user to confirm a destructive action. Replaceable for the same reason as `presentError`.
+    var confirmAction: (_ title: String, _ message: String, _ button: String) -> Bool = { title, message, button in
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    
+    /// Shows one alert listing the items that failed, if any
+    private func reportFailures(_ title: String, _ failures: [String]) {
+        guard !failures.isEmpty else { return }
+        var lines = Array(failures.prefix(10))
+        if failures.count > lines.count {
+            lines.append("…and \(failures.count - lines.count) more")
+        }
+        showError(title, lines.joined(separator: "\n"))
+    }
+    
+    /// Why this disk cannot be modified, or nil if it can
+    private var writeBlockedReason: String? {
+        if isUCSDPascal {
+            return "UCSD Pascal disks are read-only."
+        }
+        if isArchiveBacked {
+            return "This was opened from an archive and is read-only. Copy the files to a disk image to change them."
+        }
+        return nil
+    }
+    
+    /// Checks that the disk can be modified, telling the user why not otherwise
+    private func canWrite(_ action: String) -> Bool {
+        if let reason = writeBlockedReason {
+            showError("Cannot \(action)", reason)
+            return false
+        }
+        return true
+    }
+    
+    /// Path of the directory shown in this pane, e.g. "/" or "/SYSTEM/"
+    var currentDirectoryPath: String {
+        return currentDirectory?.directoryPath ?? "/"
+    }
+    
+    /// Drops entries that sit inside a directory which is itself in the list,
+    /// so a directory and its contents are handled once
+    private func topLevelEntries(_ entries: [DiskCatalogEntry]) -> [DiskCatalogEntry] {
+        let directoryPaths = entries.filter { $0.isDirectory }.map { $0.directoryPath }
+        return entries.filter { entry in
+            !directoryPaths.contains { entry.parentPath.hasPrefix($0) }
+        }
+    }
+    
+    /// The directories named by a path, outermost first. Empty if any part is missing.
+    private func directories(alongPath path: String) -> [DiskCatalogEntry] {
+        var result: [DiskCatalogEntry] = []
+        var entries = catalog?.entries ?? []
+        for name in path.split(separator: "/") {
+            guard let directory = entries.first(where: { $0.isDirectory && $0.name == name }) else { return [] }
+            result.append(directory)
+            entries = directory.children ?? []
+        }
+        return result
     }
     
     // MARK: - Find Volume Header in .dsk
@@ -411,8 +580,13 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
         
-        // Get flat list of all entries
-        let allEntries = flattenEntries(catalog.entries)
+        // A range runs between two entries of the same directory, so it never
+        // reaches into folders that may be collapsed on screen
+        guard lastSelected.parentPath == entry.parentPath else {
+            selectedEntries.insert(entry.id)
+            return
+        }
+        let allEntries = flattenEntries(catalog.entries).filter { $0.parentPath == entry.parentPath }
         
         guard let startIndex = allEntries.firstIndex(where: { $0.id == lastSelected.id }),
               let endIndex = allEntries.firstIndex(where: { $0.id == entry.id }) else {
@@ -473,8 +647,11 @@ class DiskPaneViewModel: ObservableObject {
     func navigateInto(_ directory: DiskCatalogEntry) {
         guard directory.isDirectory else { return }
         
-        // Add current directory to navigation path
-        if let current = currentDirectory {
+        // The path back is the directory's ancestors, wherever it was opened from
+        let ancestors = directories(alongPath: directory.parentPath)
+        if directory.parentPath == "/" || !ancestors.isEmpty {
+            navigationPath = ancestors
+        } else if let current = currentDirectory {
             navigationPath.append(current)
         }
         
@@ -618,49 +795,53 @@ class DiskPaneViewModel: ObservableObject {
     
     // MARK: - Import Files
     
+    /// ProDOS file type for a file imported from the Mac, judged by its extension
+    static func importFileType(forExtension ext: String) -> UInt8 {
+        switch ext.lowercased() {
+        case "txt", "text", "s", "asm", "src", "bas":
+            return 0x04  // TXT (BASIC arrives as source text, not tokenized)
+        default:
+            return 0x06  // BIN
+        }
+    }
+    
     func importFile(from url: URL) {
-        guard catalog != nil,
-              let imagePath = diskImagePath else { return }
+        importFiles(from: [url])
+    }
+    
+    /// Imports files from the Mac into the directory shown in this pane, one at a time
+    func importFiles(from urls: [URL]) {
+        guard catalog != nil, let imagePath = diskImagePath, !urls.isEmpty else { return }
+        guard canWrite("Import") else { return }
         
-        guard url.startAccessingSecurityScopedResource() else {
-            print("Failed to access file")
+        importNextFile(urls, index: 0, failures: []) { failures in
+            self.loadDiskImage(from: imagePath)
+            self.reportFailures("Some Files Could Not Be Imported", failures)
+        }
+    }
+    
+    private func importNextFile(_ urls: [URL], index: Int, failures: [String], completion: @escaping ([String]) -> Void) {
+        guard index < urls.count else {
+            completion(failures)
             return
         }
         
-        defer { url.stopAccessingSecurityScopedResource() }
+        let url = urls[index]
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         
-        do {
-            let fileData = try Data(contentsOf: url)
-            let filename = url.lastPathComponent
-            
-            print("📋 Importing file: \(filename) (\(fileData.count) bytes)")
-            
-            // Use native ProDOS writer to add file
-            // Default to BIN ($06) file type with aux 0x0000
-            ProDOSWriter.shared.addFile(
-                diskImagePath: imagePath,
-                fileName: filename,
-                fileData: fileData,
-                fileType: 0x06,  // BIN
-                auxType: 0x0000
-            ) { success, message in
-                if success {
-                    print("✅ File imported successfully")
-                    // Reload disk image
-                    DispatchQueue.main.async {
-                        self.loadDiskImage(from: imagePath)
-                    }
-                } else {
-                    print("❌ Failed to import: \(message)")
-                }
-            }
-            
-        } catch {
-            print("Error importing file: \(error)")
+        guard let fileData = try? Data(contentsOf: url) else {
+            importNextFile(urls, index: index + 1, failures: failures + ["\(url.lastPathComponent): could not be read"], completion: completion)
+            return
+        }
+        
+        addImportedFile(fileData, filename: url.lastPathComponent,
+                        fileType: Self.importFileType(forExtension: url.pathExtension), auxType: 0x0000) { failure in
+            self.importNextFile(urls, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
         }
     }
 
-    /// Import raw data as a file (for drag and drop of external text/data)
+    /// Import raw data as a file into the directory shown in this pane
     func importRawData(_ data: Data, filename: String, fileType: UInt8, auxType: UInt16) {
         guard catalog != nil,
               let imagePath = diskImagePath else {
@@ -668,16 +849,26 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
 
-        // UCSD Pascal is read-only
-        if isUCSDPascal {
-            print("❌ Cannot write to UCSD Pascal disk (read-only)")
-            return
+        guard canWrite("Import") else { return }
+
+        addImportedFile(data, filename: filename, fileType: fileType, auxType: auxType) { failure in
+            if let failure = failure {
+                self.showError("Import Failed", failure)
+            } else {
+                self.loadDiskImage(from: imagePath)
+            }
         }
+    }
+    
+    /// Writes one file into the directory shown in this pane.
+    /// The completion receives a message if it failed, nil if it worked.
+    private func addImportedFile(_ data: Data, filename: String, fileType: UInt8, auxType: UInt16, completion: @escaping (String?) -> Void) {
+        guard let imagePath = diskImagePath else { return }
 
         // Sanitize filename for ProDOS/DOS 3.3
         var sanitizedName = filename.uppercased()
             .replacingOccurrences(of: " ", with: ".")
-            .filter { $0.isLetter || $0.isNumber || $0 == "." }
+            .filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == ".") }
 
         if sanitizedName.isEmpty {
             sanitizedName = "IMPORTED"
@@ -687,7 +878,11 @@ class DiskPaneViewModel: ObservableObject {
         let maxLen = isDOS33 ? 30 : 15
         sanitizedName = String(sanitizedName.prefix(maxLen))
 
-        print("📋 Importing raw data as: \(sanitizedName) (\(data.count) bytes, type $\(String(format: "%02X", fileType)))")
+        print("📋 Importing as: \(sanitizedName) (\(data.count) bytes, type $\(String(format: "%02X", fileType)))")
+
+        let writerCompletion: (Bool, String) -> Void = { success, message in
+            completion(success ? nil : "\(sanitizedName): \(message)")
+        }
 
         if isDOS33 {
             DOS33Writer.shared.addFile(
@@ -695,287 +890,108 @@ class DiskPaneViewModel: ObservableObject {
                 fileName: sanitizedName,
                 fileData: data,
                 fileType: fileType,
-                auxType: auxType
-            ) { success, message in
-                if success {
-                    print("✅ File imported successfully (DOS 3.3)")
-                    DispatchQueue.main.async {
-                        self.loadDiskImage(from: imagePath)
-                    }
-                } else {
-                    print("❌ Failed to import: \(message)")
-                }
-            }
+                auxType: auxType,
+                completion: writerCompletion
+            )
         } else {
             ProDOSWriter.shared.addFile(
                 diskImagePath: imagePath,
                 fileName: sanitizedName,
                 fileData: data,
                 fileType: fileType,
-                auxType: auxType
-            ) { success, message in
-                if success {
-                    print("✅ File imported successfully (ProDOS)")
-                    DispatchQueue.main.async {
-                        self.loadDiskImage(from: imagePath)
-                    }
-                } else {
-                    print("❌ Failed to import: \(message)")
-                }
-            }
+                auxType: auxType,
+                parentPath: currentDirectoryPath,
+                completion: writerCompletion
+            )
         }
     }
 
+    /// Copies entries dragged from the other pane into the directory shown in this pane
     func importEntries(_ entries: [DiskCatalogEntry], from sourceVM: DiskPaneViewModel) {
         guard let targetImagePath = diskImagePath,
-              let sourceImagePath = sourceVM.diskImagePath else { return }
+              sourceVM.diskImagePath != nil else { return }
         
-        let targetFormat = isDOS33 ? "DOS 3.3" : (isUCSDPascal ? "UCSD Pascal" : "ProDOS")
-        let sourceFormat = sourceVM.isDOS33 ? "DOS 3.3" : (sourceVM.isUCSDPascal ? "UCSD Pascal" : "ProDOS")
-        print("📋 Copying files from \(sourceFormat) to \(targetFormat)...")
+        guard canWrite("Copy Files") else { return }
         
-        // UCSD Pascal is read-only
-        if isUCSDPascal {
-            print("❌ Cannot write to UCSD Pascal disk (read-only)")
-            return
+        copyEntries(topLevelEntries(entries), to: targetImagePath, parentPath: currentDirectoryPath) { _, failures in
+            self.loadDiskImage(from: targetImagePath)
+            self.reportFailures("Some Items Could Not Be Copied", failures)
         }
-        
-        // Copy files sequentially to avoid race conditions
-        copyNextFile(entries: entries, index: 0, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceVM.isDOS33)
     }
     
-    private func copyNextFile(entries: [DiskCatalogEntry], index: Int, from sourceImagePath: URL, to targetImagePath: URL, sourceIsDOS33: Bool = false) {
+    // MARK: - Copy Entries
+    
+    /// Copies entries onto this pane's disk one at a time, recreating directories on ProDOS
+    /// and flattening them on DOS 3.3.
+    /// - Parameters:
+    ///   - completion: Receives the entries of `entries` that were copied completely
+    ///     (for a directory, including everything inside it) and a message for each failure.
+    private func copyEntries(_ entries: [DiskCatalogEntry], to targetImagePath: URL, parentPath: String,
+                             index: Int = 0, copied: [DiskCatalogEntry] = [], failures: [String] = [],
+                             completion: @escaping (_ copied: [DiskCatalogEntry], _ failures: [String]) -> Void) {
         guard index < entries.count else {
-            // All files copied - reload
-            print("✅ All files copied, reloading...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.loadDiskImage(from: targetImagePath)
-            }
+            completion(copied, failures)
             return
         }
         
         let entry = entries[index]
+        let targetIsDOS33 = isDOS33
+        
+        // Records the outcome for this entry and moves on to the next one
+        let next: (Bool, [String]) -> Void = { success, newFailures in
+            self.copyEntries(entries, to: targetImagePath, parentPath: parentPath,
+                             index: index + 1, copied: success ? copied + [entry] : copied, failures: failures + newFailures,
+                             completion: completion)
+        }
         
         if entry.isDirectory {
-            // DOS 3.3 doesn't support directories
-            if isDOS33 {
-                print("⚠️ Skipping directory '\(entry.name)' - DOS 3.3 doesn't support directories")
-                if let children = entry.children, !children.isEmpty {
-                    var newEntries = Array(entries.dropFirst(index + 1))
-                    newEntries.insert(contentsOf: children, at: 0)
-                    self.copyNextFile(entries: newEntries, index: 0, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
-                } else {
-                    self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
+            let children = entry.children ?? []
+            
+            // DOS 3.3 doesn't support directories - copy the contents flat
+            if targetIsDOS33 {
+                copyEntries(children, to: targetImagePath, parentPath: parentPath) { childrenCopied, childFailures in
+                    next(childrenCopied.count == children.count, childFailures)
                 }
                 return
             }
             
-            // ProDOS: Create the directory
-            print("📁 Processing directory: \(entry.name)")
-            
-            ProDOSWriter.shared.createDirectory(diskImagePath: targetImagePath, directoryName: entry.name, parentPath: "/") { success, message in
-                if success {
-                    print("   ✅ Created directory \(entry.name)")
-                    
-                    if let children = entry.children, !children.isEmpty {
-                        print("   📦 Copying \(children.count) children into /\(entry.name)/")
-                        let childPath = "/\(entry.name)/"
-                        
-                        self.copyEntriesRecursively(entries: children, to: targetImagePath, parentPath: childPath, index: 0, sourceIsDOS33: sourceIsDOS33) {
-                            print("   ✅ Finished copying children of \(entry.name)")
-                            self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
-                        }
-                    } else {
-                        self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
-                    }
-                } else {
-                    print("   ❌ Failed to create directory: \(message)")
-                    self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
+            ProDOSWriter.shared.createDirectory(diskImagePath: targetImagePath, directoryName: entry.name, parentPath: parentPath) { success, message in
+                guard success else {
+                    next(false, ["\(entry.name): \(message)"])
+                    return
+                }
+                self.copyEntries(children, to: targetImagePath, parentPath: parentPath + entry.name + "/") { childrenCopied, childFailures in
+                    next(childrenCopied.count == children.count, childFailures)
                 }
             }
             return
         }
         
-        // Use data directly from catalog entry
-        let data = entry.data
-        print("✅ Using cached data for \(entry.name) (\(data.count) bytes)")
-        
-        // Convert file type if needed
-        var fileType = entry.fileType
-        var auxType = entry.auxType
-        
-        if sourceIsDOS33 && !isDOS33 {
-            // DOS 3.3 → ProDOS
-            let converted = DiskImageParser.convertDOS33ToProDOSFileType(entry.fileType)
-            fileType = converted.fileType
-            auxType = converted.auxType
-            print("   📝 FileType conversion: DOS 3.3 $\(String(format: "%02X", entry.fileType)) → ProDOS $\(String(format: "%02X", fileType))")
-        } else if !sourceIsDOS33 && isDOS33 {
-            print("   📝 FileType: ProDOS $\(String(format: "%02X", fileType)) (will be converted by DOS33Writer)")
+        let writerCompletion: (Bool, String) -> Void = { success, message in
+            next(success, success ? [] : ["\(entry.name): \(message)"])
         }
         
-        // Choose writer based on target filesystem
-        if isDOS33 {
+        if targetIsDOS33 {
+            // DOS33Writer converts the ProDOS file type itself
             DOS33Writer.shared.addFile(
                 diskImagePath: targetImagePath,
                 fileName: entry.name,
-                fileData: data,
+                fileData: entry.data,
                 fileType: entry.fileType,
-                auxType: entry.auxType
-            ) { addSuccess, message in
-                if addSuccess {
-                    print("✅ Copied \(entry.name) (DOS 3.3)")
-                } else {
-                    print("❌ Failed to add \(entry.name): \(message)")
-                }
-                self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
-            }
+                auxType: entry.auxType,
+                locked: false,
+                completion: writerCompletion
+            )
         } else {
             ProDOSWriter.shared.addFile(
                 diskImagePath: targetImagePath,
                 fileName: entry.name,
-                fileData: data,
-                fileType: fileType,
-                auxType: auxType
-            ) { addSuccess, message in
-                if addSuccess {
-                    print("✅ Copied \(entry.name) (ProDOS)")
-                } else {
-                    print("❌ Failed to add \(entry.name): \(message)")
-                }
-                self.copyNextFile(entries: entries, index: index + 1, from: sourceImagePath, to: targetImagePath, sourceIsDOS33: sourceIsDOS33)
-            }
-        }
-    }
-    
-    // MARK: - Copy Directory Contents (With Structure)
-    
-    func copyDirectoryContents(_ entries: [DiskCatalogEntry], from sourceImagePath: URL, to targetImagePath: URL, sourceIsDOS33: Bool = false, completion: @escaping () -> Void) {
-        // Copy directory structure recursively
-        copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: "/", index: 0, sourceIsDOS33: sourceIsDOS33, completion: completion)
-    }
-    
-    private func copyEntriesRecursively(entries: [DiskCatalogEntry], to targetImagePath: URL, parentPath: String, index: Int, sourceIsDOS33: Bool = false, completion: @escaping () -> Void) {
-        guard index < entries.count else {
-            // All entries copied
-            completion()
-            return
-        }
-        
-        let entry = entries[index]
-        
-        if entry.isDirectory {
-            // DOS 3.3 doesn't support directories - flatten
-            if isDOS33 {
-                if let children = entry.children, !children.isEmpty {
-                    self.copyEntriesRecursively(entries: children, to: targetImagePath, parentPath: parentPath, index: 0, sourceIsDOS33: sourceIsDOS33) {
-                        self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                    }
-                } else {
-                    self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                }
-                return
-            }
-            
-            // ProDOS: Create subdirectory
-            print("📁 Creating subdirectory: \(entry.name)")
-            
-            ProDOSWriter.shared.createDirectory(diskImagePath: targetImagePath, directoryName: entry.name, parentPath: parentPath) { success, message in
-                if success {
-                    print("   ✅ Created directory \(entry.name)")
-                    
-                    if let children = entry.children, !children.isEmpty {
-                        let newPath = parentPath + entry.name + "/"
-                        self.copyEntriesRecursively(entries: children, to: targetImagePath, parentPath: newPath, index: 0, sourceIsDOS33: sourceIsDOS33) {
-                            self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                        }
-                    } else {
-                        self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                    }
-                } else {
-                    print("   ❌ Failed to create directory: \(message)")
-                    self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                }
-            }
-        } else {
-            // Copy file
-            let data = entry.data
-            print("   📄 Copying file: \(entry.name) (\(data.count) bytes)")
-            
-            // Convert file type if needed
-            var fileType = entry.fileType
-            var auxType = entry.auxType
-            
-            if sourceIsDOS33 && !isDOS33 {
-                let converted = DiskImageParser.convertDOS33ToProDOSFileType(entry.fileType)
-                fileType = converted.fileType
-                auxType = converted.auxType
-                print("   📝 FileType: DOS 3.3 $\(String(format: "%02X", entry.fileType)) → ProDOS $\(String(format: "%02X", fileType))")
-            }
-            
-            if isDOS33 {
-                DOS33Writer.shared.addFile(
-                    diskImagePath: targetImagePath,
-                    fileName: entry.name,
-                    fileData: data,
-                    fileType: entry.fileType,
-                    auxType: entry.auxType,
-                    locked: false
-                ) { success, message in
-                    if success {
-                        print("   ✅ Copied \(entry.name)")
-                    } else {
-                        print("   ❌ Failed: \(message)")
-                    }
-                    self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                }
-            } else {
-                ProDOSWriter.shared.addFile(
-                    diskImagePath: targetImagePath,
-                    fileName: entry.name,
-                    fileData: data,
-                    fileType: fileType,
-                    auxType: auxType,
-                    parentPath: parentPath
-                ) { success, message in
-                    if success {
-                        print("   ✅ Copied \(entry.name)")
-                    } else {
-                        print("   ❌ Failed: \(message)")
-                    }
-                    self.copyEntriesRecursively(entries: entries, to: targetImagePath, parentPath: parentPath, index: index + 1, sourceIsDOS33: sourceIsDOS33, completion: completion)
-                }
-            }
-        }
-    }
-    
-    private func copyNextFileFromList(files: [DiskCatalogEntry], index: Int, from sourceImagePath: URL, to targetImagePath: URL, completion: @escaping () -> Void) {
-        guard index < files.count else {
-            // All files from directory copied
-            completion()
-            return
-        }
-        
-        let entry = files[index]
-        let data = entry.data
-        
-        print("   Copying \(entry.name) from directory...")
-        
-        ProDOSWriter.shared.addFile(
-            diskImagePath: targetImagePath,
-            fileName: entry.name,
-            fileData: data,
-            fileType: entry.fileType,
-            auxType: entry.auxType
-        ) { addSuccess, message in
-            if addSuccess {
-                print("   ✅ Copied \(entry.name)")
-            } else {
-                print("   ❌ Failed: \(message)")
-            }
-            
-            // Continue with next file
-            self.copyNextFileFromList(files: files, index: index + 1, from: sourceImagePath, to: targetImagePath, completion: completion)
+                fileData: entry.data,
+                fileType: entry.fileType,
+                auxType: entry.auxType,
+                parentPath: parentPath,
+                completion: writerCompletion
+            )
         }
     }
     
@@ -987,64 +1003,48 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
         
-        // UCSD Pascal is read-only
-        if isUCSDPascal {
-            print("❌ Cannot delete from UCSD Pascal disk (read-only)")
-            return
-        }
+        guard canWrite("Delete") else { return }
         
-        let entriesToDelete = getSelectedEntries()
+        let entriesToDelete = topLevelEntries(getSelectedEntries())
         guard !entriesToDelete.isEmpty else { return }
         
-        print("🗑️ Deleting \(entriesToDelete.count) files...")
+        // Deleting cannot be undone, and a directory goes with everything inside it
+        let what = entriesToDelete.count == 1 ? "“\(entriesToDelete[0].name)”" : "\(entriesToDelete.count) items"
+        let hasDirectory = entriesToDelete.contains { $0.isDirectory }
+        guard confirmAction("Delete \(what)?",
+                            (hasDirectory ? "Directories are deleted with everything inside them. " : "") + "This cannot be undone.",
+                            "Delete") else { return }
         
-        // Delete files sequentially
-        deleteNextFile(entries: entriesToDelete, index: 0, from: diskImagePath)
+        deleteEntries(entriesToDelete, from: diskImagePath, isDOS33: isDOS33) { failures in
+            self.selectedEntries.removeAll()
+            self.loadDiskImage(from: diskImagePath)
+            self.reportFailures("Some Items Could Not Be Deleted", failures)
+        }
     }
     
-    private func deleteNextFile(entries: [DiskCatalogEntry], index: Int, from diskImagePath: URL) {
+    /// Deletes entries from a disk image one at a time. Each delete rewrites the whole
+    /// image, so they must never run concurrently.
+    private func deleteEntries(_ entries: [DiskCatalogEntry], from diskImagePath: URL, isDOS33: Bool,
+                               index: Int = 0, failures: [String] = [],
+                               completion: @escaping (_ failures: [String]) -> Void) {
         guard index < entries.count else {
-            // All files deleted - reload and clear selection
-            print("✅ All files deleted, reloading...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.selectedEntries.removeAll()
-                self.loadDiskImage(from: diskImagePath)
-            }
+            completion(failures)
             return
         }
         
         let entry = entries[index]
+        let name = entry.name
         
-        // Strip any display suffixes (like lock icon) from filename
-        var cleanName = entry.name
-        if cleanName.hasSuffix(" 🔒") {
-            cleanName = String(cleanName.dropLast(2))
+        let writerCompletion: (Bool, String) -> Void = { success, message in
+            self.deleteEntries(entries, from: diskImagePath, isDOS33: isDOS33, index: index + 1,
+                               failures: success ? failures : failures + ["\(name): \(message)"],
+                               completion: completion)
         }
         
-        print("🗑️ Attempting to delete: \(cleanName)")
-        
         if isDOS33 {
-            DOS33Writer.shared.deleteFile(
-                diskImagePath: diskImagePath,
-                fileName: cleanName
-            ) { success, message in
-                if success {
-                    print("✅ Deleted \(cleanName) (DOS 3.3)")
-                } else {
-                    print("❌ Failed to delete \(cleanName): \(message)")
-                }
-                self.deleteNextFile(entries: entries, index: index + 1, from: diskImagePath)
-            }
+            DOS33Writer.shared.deleteFile(diskImagePath: diskImagePath, fileName: name, completion: writerCompletion)
         } else {
-            // ProDOS delete
-            ProDOSWriter.shared.deleteFile(diskImagePath: diskImagePath, fileName: cleanName) { success, message in
-                if success {
-                    print("✅ Deleted \(cleanName) (ProDOS)")
-                } else {
-                    print("❌ Failed to delete \(cleanName): \(message)")
-                }
-                self.deleteNextFile(entries: entries, index: index + 1, from: diskImagePath)
-            }
+            ProDOSWriter.shared.deleteFile(diskImagePath: diskImagePath, fileName: name, parentPath: entry.parentPath, completion: writerCompletion)
         }
     }
     
@@ -1053,6 +1053,13 @@ class DiskPaneViewModel: ObservableObject {
     func showCreateDirectoryDialog() {
         guard let diskImagePath = diskImagePath else {
             print("❌ No disk image loaded")
+            return
+        }
+        
+        guard canWrite("Create Directory") else { return }
+        
+        guard !isDOS33 else {
+            showError("Cannot Create Directory", "DOS 3.3 disks do not support directories.")
             return
         }
         
@@ -1077,16 +1084,7 @@ class DiskPaneViewModel: ObservableObject {
                 return
             }
             
-            // Determine parent path
-            let parentPath: String
-            if let currentDir = currentDirectory {
-                // Build path from navigation stack
-                var pathComponents = navigationPath.map { $0.name }
-                pathComponents.append(currentDir.name)
-                parentPath = "/" + pathComponents.joined(separator: "/") + "/"
-            } else {
-                parentPath = "/"
-            }
+            let parentPath = currentDirectoryPath
             
             print("📁 Creating directory '\(directoryName)' in '\(parentPath)'")
             
@@ -1098,18 +1096,10 @@ class DiskPaneViewModel: ObservableObject {
                 if success {
                     print("✅ Directory '\(directoryName)' created successfully")
                     // Reload disk image to show new directory
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        self.loadDiskImage(from: diskImagePath)
-                    }
+                    self.loadDiskImage(from: diskImagePath)
                 } else {
                     print("❌ Failed to create directory: \(message)")
-                    DispatchQueue.main.async {
-                        let errorAlert = NSAlert()
-                        errorAlert.messageText = "Failed to Create Directory"
-                        errorAlert.informativeText = message
-                        errorAlert.alertStyle = .warning
-                        errorAlert.runModal()
-                    }
+                    self.showError("Failed to Create Directory", message)
                 }
             }
         }
@@ -1123,6 +1113,8 @@ class DiskPaneViewModel: ObservableObject {
         // Clear all state
         catalog = nil
         diskImagePath = nil
+        isArchiveBacked = false
+        diskImageFileSize = nil
         selectedEntries.removeAll()
         currentDirectory = nil
         navigationPath.removeAll()
@@ -1139,6 +1131,10 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
         
+        guard canWrite("Rename") else { return }
+        
+        let oldName = entry.name
+        
         let alert = NSAlert()
         alert.messageText = "Rename \(entry.isDirectory ? "Directory" : "File")"
         alert.informativeText = "Enter a new name:"
@@ -1148,7 +1144,7 @@ class DiskPaneViewModel: ObservableObject {
         
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         textField.placeholderString = "New name"
-        textField.stringValue = entry.name
+        textField.stringValue = oldName
         alert.accessoryView = textField
         
         let response = alert.runModal()
@@ -1161,34 +1157,28 @@ class DiskPaneViewModel: ObservableObject {
                 return
             }
             
-            guard newName != entry.name else {
+            guard newName != oldName else {
                 print("❌ Name unchanged")
                 return
             }
             
-            print("✏️ Renaming '\(entry.name)' to '\(newName)'")
+            print("✏️ Renaming '\(oldName)' to '\(newName)'")
             
-            ProDOSWriter.shared.renameFile(
-                diskImagePath: diskImagePath,
-                oldName: entry.name,
-                newName: newName
-            ) { success, message in
+            let completion: (Bool, String) -> Void = { success, message in
                 if success {
                     print("✅ Renamed to '\(newName)'")
                     // Reload disk image to show new name
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        self.loadDiskImage(from: diskImagePath)
-                    }
+                    self.loadDiskImage(from: diskImagePath)
                 } else {
                     print("❌ Failed to rename: \(message)")
-                    DispatchQueue.main.async {
-                        let errorAlert = NSAlert()
-                        errorAlert.messageText = "Failed to Rename"
-                        errorAlert.informativeText = message
-                        errorAlert.alertStyle = .warning
-                        errorAlert.runModal()
-                    }
+                    self.showError("Failed to Rename", message)
                 }
+            }
+            
+            if isDOS33 {
+                DOS33Writer.shared.renameFile(diskImagePath: diskImagePath, oldName: oldName, newName: newName, completion: completion)
+            } else {
+                ProDOSWriter.shared.renameFile(diskImagePath: diskImagePath, oldName: oldName, newName: newName, parentPath: entry.parentPath, completion: completion)
             }
         }
     }
@@ -1224,27 +1214,22 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
 
+        guard canWrite("Change File Type") else { return }
+
         ProDOSWriter.shared.setFileType(
             diskImagePath: diskImagePath,
             fileName: entry.name,
+            parentPath: entry.parentPath,
             fileType: newFileType,
             auxType: newAuxType
         ) { success, message in
             if success {
                 print("File type changed to $\(String(format: "%02X", newFileType)), aux $\(String(format: "%04X", newAuxType))")
                 // Reload disk image to show new file type
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.loadDiskImage(from: diskImagePath)
-                }
+                self.loadDiskImage(from: diskImagePath)
             } else {
                 print("Failed to change file type: \(message)")
-                DispatchQueue.main.async {
-                    let errorAlert = NSAlert()
-                    errorAlert.messageText = "Failed to Change File Type"
-                    errorAlert.informativeText = message
-                    errorAlert.alertStyle = .warning
-                    errorAlert.runModal()
-                }
+                self.showError("Failed to Change File Type", message)
             }
         }
     }
@@ -1263,7 +1248,7 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
         
-        FocusManager.shared.copyToClipboard(entries: entries, operation: .copy, sourcePath: sourcePath)
+        FocusManager.shared.copyToClipboard(entries: entries, operation: .copy, sourcePath: sourcePath, source: self)
     }
     
     func cutSelected() {
@@ -1278,64 +1263,66 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
         
-        FocusManager.shared.copyToClipboard(entries: entries, operation: .cut, sourcePath: sourcePath)
+        FocusManager.shared.copyToClipboard(entries: entries, operation: .cut, sourcePath: sourcePath, source: self)
     }
     
-    func paste(to targetViewModel: DiskPaneViewModel) {
+    /// Pastes the clipboard into the directory shown in this pane.
+    /// After a cut, only the entries that were copied completely are removed from the source.
+    func pasteClipboard() {
         let clipboard = FocusManager.shared
         
-        guard clipboard.hasClipboard() else {
+        guard clipboard.hasClipboard(),
+              let sourceDiskPath = clipboard.clipboardSourcePath else {
             print("❌ Clipboard is empty")
             return
         }
         
-        guard let sourceDiskPath = clipboard.clipboardSourcePath else {
-            print("❌ No source disk in clipboard")
-            return
-        }
-        
-        guard let targetDiskPath = targetViewModel.diskImagePath else {
+        guard let targetDiskPath = diskImagePath else {
             print("❌ No target disk loaded")
             return
         }
         
-        print("📋 Pasting \(clipboard.clipboardEntries.count) items...")
-        print("   Operation: \(clipboard.clipboardOperation)")
+        guard canWrite("Paste") else { return }
         
-        // Copy entries using existing mechanism
-        copyDirectoryContents(clipboard.clipboardEntries, from: sourceDiskPath, to: targetDiskPath) {
-            print("✅ All files pasted")
+        let isCut = clipboard.clipboardOperation == .cut
+        let sourceIsDOS33 = clipboard.clipboardSourceIsDOS33
+        let sourceVM = clipboard.clipboardSourceVM
+        let targetPath = currentDirectoryPath
+        let isSameDisk = sourceDiskPath == targetDiskPath
+        
+        var failures: [String] = []
+        var entries: [DiskCatalogEntry] = []
+        for entry in topLevelEntries(clipboard.clipboardEntries) {
+            if isSameDisk && entry.isDirectory && targetPath.hasPrefix(entry.directoryPath) {
+                failures.append("\(entry.name): a directory cannot be pasted into itself")
+            } else if isSameDisk && isCut && entry.parentPath == targetPath {
+                // Moving an entry to where it already is
+                continue
+            } else {
+                entries.append(entry)
+            }
+        }
+        
+        print("📋 Pasting \(entries.count) items into \(targetPath) (\(clipboard.clipboardOperation))")
+        
+        copyEntries(entries, to: targetDiskPath, parentPath: targetPath) { copied, copyFailures in
+            failures += copyFailures
             
-            // If it was a CUT operation, delete from source
-            if clipboard.clipboardOperation == .cut {
-                print("✂️ Cut operation - deleting from source")
-                
-                // Delete each entry from source
-                for entry in clipboard.clipboardEntries {
-                    ProDOSWriter.shared.deleteFile(
-                        diskImagePath: sourceDiskPath,
-                        fileName: entry.name
-                    ) { deleteSuccess, message in
-                        if deleteSuccess {
-                            print("✅ Deleted \(entry.name) from source")
-                        } else {
-                            print("❌ Failed to delete \(entry.name): \(message)")
-                        }
-                    }
+            let finish: ([String]) -> Void = { deleteFailures in
+                clipboard.clearClipboard()
+                self.loadDiskImage(from: targetDiskPath)
+                if let sourceVM = sourceVM, sourceVM !== self, sourceVM.diskImagePath == sourceDiskPath {
+                    sourceVM.loadDiskImage(from: sourceDiskPath)
                 }
-                
-                // Reload source after deletion
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.loadDiskImage(from: sourceDiskPath)
-                }
+                self.reportFailures(isCut ? "Some Items Could Not Be Moved" : "Some Items Could Not Be Pasted",
+                                    failures + deleteFailures)
             }
             
-            // Clear clipboard after successful paste
-            clipboard.clearClipboard()
-            
-            // Reload target to show new files
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                targetViewModel.loadDiskImage(from: targetDiskPath)
+            if isCut {
+                // Anything that failed to copy stays on the source disk
+                self.deleteEntries(copied, from: sourceDiskPath, isDOS33: sourceIsDOS33, completion: finish)
+            } else {
+                finish([])
             }
         }
     }

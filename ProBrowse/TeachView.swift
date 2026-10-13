@@ -71,13 +71,12 @@ struct TeachLineView: View {
     let line: TeachLine
 
     var body: some View {
-        HStack(spacing: 0) {
+        Group {
             if line.runs.isEmpty {
                 Text(" ")  // Empty line placeholder
             } else {
-                ForEach(Array(line.runs.enumerated()), id: \.offset) { _, run in
-                    TeachRunView(run: run)
-                }
+                // One Text for the whole line, so a long paragraph wraps as a unit
+                line.runs.reduce(Text("")) { $0 + TeachRunView(run: $1).text }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,6 +87,10 @@ struct TeachRunView: View {
     let run: TeachTextRun
 
     var body: some View {
+        text
+    }
+
+    var text: Text {
         Text(run.text)
             .font(wysiwygFont)
             .fontWeight(run.isBold ? .bold : .regular)

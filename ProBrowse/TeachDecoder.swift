@@ -108,95 +108,48 @@ class TeachDecoder {
     }
 
     /// Find a resource by type and ID in the resource fork
-    private static func findResource(_ data: Data, type: UInt16, id: UInt16) -> Data? {
-        guard data.count >= 16 else { return nil }
+    private static func findResource(_ data: Data, type: UInt16, id: UInt32) -> Data? {
+        guard data.count >= 12 else { return nil }
 
-        // Apple IIgs resource fork structure:
+        // Resource file header:
         // +$00: rFileVersion (4 bytes)
         // +$04: rFileToMap (4 bytes) - offset to resource map
         // +$08: rFileMapSize (4 bytes) - size of resource map
-        // +$0C: rFileMemo (128 bytes) - reserved
+        let mapOffset = Int(readDWord(data, at: 4))
+        let mapSize = Int(readDWord(data, at: 8))
+        guard mapOffset > 0, mapSize >= 0x20, mapOffset + mapSize <= data.count else { return nil }
 
-        let rFileToMap = Int(readDWord(data, at: 4))
-        let rFileMapSize = Int(readDWord(data, at: 8))
+        // Resource map:
+        // +$0E: mapToIndex (2 bytes) - offset from the map to the reference records
+        // +$18: mapIndexUsed (4 bytes) - number of reference records in use
+        // The free list sits between the map header and the reference records.
+        let indexOffset = mapOffset + Int(readWord(data, at: mapOffset + 0x0E))
+        let indexUsed = Int(readDWord(data, at: mapOffset + 0x18))
 
-        guard rFileToMap > 0 && rFileToMap + rFileMapSize <= data.count else {
-            // Try alternate format - scan for the style block
-            return scanForStyleBlock(data)
-        }
+        // Resource reference record, 20 bytes:
+        // +$00: resType (2 bytes), zero in an unused record
+        // +$02: resID (4 bytes)
+        // +$06: resOffset (4 bytes) - offset from start of file to resource data
+        // +$0A: resAttr (2 bytes)
+        // +$0C: resSize (4 bytes)
+        // +$10: resHandle (4 bytes) - runtime only
+        let recordSize = 20
+        let mapEnd = mapOffset + mapSize
+        var entryOffset = indexOffset
+        var remaining = indexUsed
 
-        // Parse resource map
-        // Resource map structure:
-        // +$00: mapNext (4 bytes)
-        // +$04: mapFlag (2 bytes)
-        // +$06: mapOffset (4 bytes)
-        // +$0A: mapSize (4 bytes)
-        // +$0E: mapToIndex (2 bytes)
-        // +$10: mapFileNum (2 bytes)
-        // +$12: mapID (2 bytes)
-        // +$14: mapIndexSize (4 bytes)
-        // +$18: mapIndexUsed (4 bytes)
-        // +$1C: mapFreeListSize (2 bytes)
-        // +$1E: mapFreeListUsed (2 bytes)
-        // +$20: Resource reference entries start
-
-        let mapOffset = rFileToMap
-        guard mapOffset + 0x20 <= data.count else {
-            return scanForStyleBlock(data)
-        }
-
-        let mapIndexUsed = Int(readDWord(data, at: mapOffset + 0x18))
-
-        // Each resource reference entry is variable size
-        // +$00: resType (2 bytes)
-        // +$02: resID (2 bytes)
-        // +$04: resOffset (4 bytes) - offset from start of file to resource data
-        // +$08: resAttr (2 bytes)
-        // +$0A: resSize (4 bytes)
-        // +$0E: resHandle (4 bytes) - runtime only
-
-        var entryOffset = mapOffset + 0x20
-        for _ in 0..<mapIndexUsed {
-            guard entryOffset + 0x12 <= data.count else { break }
-
+        while remaining > 0 && entryOffset + recordSize <= mapEnd {
             let resType = readWord(data, at: entryOffset)
-            let resID = readWord(data, at: entryOffset + 2)
-            let resOffset = Int(readDWord(data, at: entryOffset + 4))
-            let resSize = Int(readDWord(data, at: entryOffset + 0x0A))
-
-            if resType == type && resID == id {
-                // Found the resource
-                guard resOffset >= 0 && resOffset + resSize <= data.count else {
-                    return nil
-                }
-                return data.subdata(in: resOffset..<(resOffset + resSize))
-            }
-
-            entryOffset += 0x12  // Size of resource reference entry
-        }
-
-        // If not found via map, try scanning
-        return scanForStyleBlock(data)
-    }
-
-    /// Fallback: scan for style block data in resource fork
-    private static func scanForStyleBlock(_ data: Data) -> Data? {
-        // The TEFormat structure starts with version (should be 0)
-        // followed by rulerListLength (4 bytes)
-        // Try to find a plausible TEFormat structure
-
-        for offset in stride(from: 0, to: min(data.count - 20, 1024), by: 2) {
-            let version = readWord(data, at: offset)
-            if version == 0 {
-                let rulerListLength = Int(readDWord(data, at: offset + 2))
-                if rulerListLength >= 0 && rulerListLength < 10000 {
-                    // Looks plausible - return data from this offset
-                    let remainingSize = data.count - offset
-                    if remainingSize > 20 {
-                        return data.subdata(in: offset..<data.count)
-                    }
+            if resType != 0 {
+                remaining -= 1
+                if resType == type && readDWord(data, at: entryOffset + 2) == id {
+                    let resOffset = Int(readDWord(data, at: entryOffset + 6))
+                    let resSize = Int(readDWord(data, at: entryOffset + 0x0C))
+                    guard resOffset + resSize <= data.count else { return nil }
+                    return data.subdata(in: resOffset..<(resOffset + resSize))
                 }
             }
+            entryOffset += recordSize
         }
 
         return nil
@@ -218,6 +171,7 @@ class TeachDecoder {
         offset += 4
 
         // Skip theRulerList
+        guard rulerListLength <= data.count - offset else { return nil }
         offset += rulerListLength
 
         guard offset + 4 <= data.count else { return nil }
@@ -227,6 +181,7 @@ class TeachDecoder {
         offset += 4
 
         let styleListStart = offset
+        guard styleListLength <= data.count - styleListStart else { return nil }
 
         // Parse styles (TEStyle is 12 bytes each)
         var styles: [TEStyle] = []
@@ -310,7 +265,7 @@ class TeachDecoder {
 
             // Find the style for this run
             let styleIndex = Int(item.styleOffset) / 12  // TEStyle is 12 bytes
-            let style = styleIndex < styles.count ? styles[styleIndex] : styles[0]
+            let style = styles.indices.contains(styleIndex) ? styles[styleIndex] : styles[0]
 
             // Extract text for this run
             let endIndex = min(textIndex + Int(item.length), textChars.count)

@@ -17,8 +17,8 @@ ProBrowse is a modern macOS dual-pane file manager for Apple II disk images, bri
 - **Native ProDOS Support** - Read and write ProDOS disk images natively in Swift
 - **DOS 3.3 Support** - Full read and write support for DOS 3.3 disk images
 - **UCSD Pascal Support** - Read UCSD Pascal volumes (read-only)
-- **ShrinkIt Archives** - Browse, extract, and create NuFX archives (.shk, .sdk, .bxy)
-- **Binary II Archives** - Read and write Binary II archives (.bny, .bqy)
+- **ShrinkIt Archives** - Browse and extract NuFX archives (.shk, .sdk, .bxy)
+- **Binary II Archives** - Browse and extract Binary II archives (.bny, .bqy)
 - **Drag & Drop** - Copy files between disk images or import from Finder
 - **Change File Type** - Right-click to modify file type and aux type
 - **Complete File Type Database** - Recognizes 200+ ProDOS file types with proper names
@@ -49,10 +49,10 @@ ProBrowse is a modern macOS dual-pane file manager for Apple II disk images, bri
 
 | Format | Extension | Read | Write | Description |
 |--------|-----------|------|-------|-------------|
-| ShrinkIt Disk | `.sdk` | ✅ | ✅ | Compressed disk images |
-| ShrinkIt Archive | `.shk` | ✅ | ✅ | Compressed file archives |
-| Binary II + ShrinkIt | `.bxy` | ✅ | ✅ | Binary II wrapped ShrinkIt |
-| Binary II | `.bny`, `.bqy` | ✅ | ✅ | Binary II archives |
+| ShrinkIt Disk | `.sdk` | ✅ | ❌ | Compressed disk images |
+| ShrinkIt Archive | `.shk` | ✅ | ❌ | Compressed file archives |
+| Binary II + ShrinkIt | `.bxy` | ✅ | ❌ | Binary II wrapped ShrinkIt |
+| Binary II | `.bny`, `.bqy` | ✅ | ❌ | Binary II archives |
 | Gzip | `.gz` | ✅ | ❌ | Gzip compressed files |
 | ZIP | `.zip` | ✅ | ❌ | ZIP archives |
 
@@ -65,19 +65,19 @@ ProBrowse is a modern macOS dual-pane file manager for Apple II disk images, bri
 | ProDOS | ✅ | ✅ | Full support including subdirectories |
 | DOS 3.3 | ✅ | ✅ | Full support |
 | UCSD Pascal | ✅ | ❌ | Read-only |
-| ShrinkIt Archives | ✅ | ✅ | Native LZW compression |
-| Binary II Archives | ✅ | ✅ | Full support |
+| ShrinkIt Archives | ✅ | ❌ | Native LZW decompression |
+| Binary II Archives | ✅ | ❌ | Read-only |
 
 
 ### Requirements
 
-- macOS 14.0 (Sonoma) or later
+- macOS 15.7 or later
 - Apple Silicon or Intel Mac
 
 ### Current Limitations
 
 - UCSD Pascal volumes are read-only
-- Gzip and ZIP archives are read-only
+- ShrinkIt, Binary II, Gzip and ZIP archives are read-only; copy files to a disk image to change them
 - Beta quality - expect bugs!
 
 ---
@@ -93,7 +93,7 @@ ProBrowse is a modern macOS dual-pane file manager for Apple II disk images, bri
 
 ## Building
 
-Requires Xcode 15+ and macOS 14.0+
+Requires Xcode 16+ and macOS 15.7+
 
 ```bash
 open ProBrowse.xcodeproj

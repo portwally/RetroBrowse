@@ -106,18 +106,30 @@ struct ContentView: View {
             if keyboardMonitor != nil { return }
             // Setup keyboard shortcuts
             keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                let focusManager = FocusManager.shared
+                // Leave the keys alone while a sheet, alert or other window is in front,
+                // or while text is being edited, so they keep their normal meaning there
+                guard let window = event.window,
+                      window.sheetParent == nil, window.attachedSheet == nil,
+                      NSApp.modalWindow == nil,
+                      !(window.firstResponder is NSText) else {
+                    return event
+                }
                 
-                // Determine active and target view models based on focus
-                let (activeVM, targetVM): (DiskPaneViewModel, DiskPaneViewModel) = {
-                    if focusManager.activePaneId == .left {
-                        return (leftPaneVM, rightPaneVM)
-                    } else {
-                        return (rightPaneVM, leftPaneVM)
-                    }
-                }()
+                let activeVM = FocusManager.shared.activePaneId == .left ? leftPaneVM : rightPaneVM
+                let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
                 
-                if event.modifierFlags.contains(.command) {
+                // Delete and forward delete remove the selection (after confirmation)
+                if modifiers.isEmpty && (event.keyCode == 51 || event.keyCode == 117) && !activeVM.selectedEntries.isEmpty {
+                    activeVM.deleteSelected()
+                    return nil
+                }
+                
+                if modifiers == [.command, .shift] && event.charactersIgnoringModifiers?.lowercased() == "o" {
+                    rightPaneVM.showingFilePicker = true
+                    return nil
+                }
+                
+                if modifiers == .command {
                     switch event.charactersIgnoringModifiers {
                     case "c":
                         activeVM.copySelected()
@@ -126,10 +138,13 @@ struct ContentView: View {
                         activeVM.cutSelected()
                         return nil
                     case "v":
-                        activeVM.paste(to: targetVM)
+                        activeVM.pasteClipboard()
                         return nil
                     case "i":
                         activeVM.inspectSelectedFile()
+                        return nil
+                    case "o":
+                        leftPaneVM.showingFilePicker = true
                         return nil
                     default:
                         break

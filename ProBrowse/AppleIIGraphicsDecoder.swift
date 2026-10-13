@@ -175,33 +175,8 @@ class AppleIIDecoder {
                 }
             }
 
-        case 0x06:  // BIN - check by aux type and size
-            switch auxType {
-            case 0x2000, 0x4000:  // HGR load addresses
-                if size >= 8184 && size <= 8200 {
-                    if let image = decodeHGR(data: data) {
-                        return (image, .HGR)
-                    }
-                }
-            case 0x2000...0x3FFF:  // DHGR aux memory range
-                if size == 16384 {
-                    if let image = decodeDHGR(data: data) {
-                        return (image, .DHGR)
-                    }
-                }
-            default:
-                // Check for SHR by size
-                if size >= 32000 && size <= 32768 {
-                    if let image = decodeSHR(data: data, is3200Color: false) {
-                        return (image, .SHR(is3200Color: false))
-                    }
-                } else if size >= 38400 && size <= 39000 {
-                    // 3200-color SHR
-                    if let image = decodeSHR(data: data, is3200Color: true) {
-                        return (image, .SHR(is3200Color: true))
-                    }
-                }
-            }
+        case 0x06:  // BIN - a screen dump is recognised by its size below
+            break
 
         case 0xB3:  // APP - Some SHR files use this type (especially packed)
             if let result = PackedSHRDecoder.detectAndDecodePNT(data: data) {
@@ -216,13 +191,6 @@ class AppleIIDecoder {
 
         default:
             break
-        }
-
-        // Check for MacPaint format (has 512-byte header + PackBits compressed data)
-        if MacPaintDecoder.isMacPaint(data) {
-            if let image = MacPaintDecoder.decode(data) {
-                return (image, .MacPaint)
-            }
         }
 
         // Fallback: detect by file size
@@ -249,6 +217,14 @@ class AppleIIDecoder {
 
         default:
             break
+        }
+
+        // Check for MacPaint format (has 512-byte header + PackBits compressed data).
+        // This comes last: its header check is weak and would claim screen dumps that start with zeros.
+        if MacPaintDecoder.isMacPaint(data) {
+            if let image = MacPaintDecoder.decode(data) {
+                return (image, .MacPaint)
+            }
         }
 
         return (nil, .Unknown)
@@ -580,9 +556,10 @@ class PackedSHRDecoder {
             return decodeAPF(data: data)
         }
 
-        // Try Paintworks format
-        if isPaintworksFormat(data) {
-            return decodePaintworks(data: data)
+        // Try Paintworks format. The check is weak (a packed screen that starts
+        // black passes it), so carry on if the file does not decode that way.
+        if isPaintworksFormat(data), let result = decodePaintworks(data: data) {
+            return result
         }
 
         // Try PackBytes compressed
@@ -719,7 +696,8 @@ class PackedSHRDecoder {
 
         guard scanLineDirectory.count == numScanLines else { return nil }
 
-        let bytesPerLine = pixelsPerScanLine / 2
+        // 640 mode packs four pixels into a byte, 320 mode two
+        let bytesPerLine = (masterMode & 0x80) != 0 ? pixelsPerScanLine / 4 : pixelsPerScanLine / 2
         var allPixels = Data()
         allPixels.reserveCapacity(bytesPerLine * numScanLines)
 
@@ -795,7 +773,8 @@ class PackedSHRDecoder {
     private static func renderSHRStandard(mainData: MAINBlockData) -> CGImage? {
         let width = mainData.pixelsPerScanLine
         let height = mainData.numScanLines
-        let bytesPerLine = width / 2
+        let is640 = (mainData.masterMode & 0x80) != 0
+        let bytesPerLine = is640 ? width / 4 : width / 2
 
         var rgbaBuffer = [UInt8](repeating: 0, count: width * height * 4)
 
@@ -819,6 +798,23 @@ class PackedSHRDecoder {
                 let dataIndex = lineOffset + xByte
                 guard dataIndex < mainData.pixels.count else { continue }
                 let byte = mainData.pixels[dataIndex]
+
+                if is640 {
+                    // Four 2-bit pixels; each column of the four uses its own quarter of the palette
+                    let paletteBase = [8, 12, 0, 4]
+                    for column in 0..<4 {
+                        let x = xByte * 4 + column
+                        let colorIndex = paletteBase[column] + Int((byte >> UInt8(6 - column * 2)) & 0x03)
+                        guard x < width, colorIndex < palette.count else { continue }
+                        let color = palette[colorIndex]
+                        let bufIdx = (y * width + x) * 4
+                        rgbaBuffer[bufIdx] = color.0
+                        rgbaBuffer[bufIdx + 1] = color.1
+                        rgbaBuffer[bufIdx + 2] = color.2
+                        rgbaBuffer[bufIdx + 3] = 255
+                    }
+                    continue
+                }
 
                 let x = xByte * 2
 

@@ -47,7 +47,7 @@ class NuFXParser {
             for record in archive.records {
                 if let diskThread = record.threads.first(where: { $0.isDiskImage }) {
                     print("   Found disk image thread: \(record.filename)")
-                    let extracted = try archive.extractThread(diskThread)
+                    let extracted = try archive.extractThread(diskThread, of: record)
                     print("   ✅ Extracted \(extracted.count) bytes")
                     return padToFloppySize(extracted)
                 }
@@ -56,7 +56,7 @@ class NuFXParser {
             // Fall back to first data fork that looks like a disk image
             for record in archive.records {
                 if let dataThread = record.dataForkThread {
-                    let extracted = try archive.extractThread(dataThread)
+                    let extracted = try archive.extractThread(dataThread, of: record)
                     // Check if it's a plausible disk image size
                     if [143360, 163840, 819200, 1638400].contains(extracted.count) ||
                        extracted.count >= 143360 {

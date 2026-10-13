@@ -92,20 +92,15 @@ class BinaryIIArchive {
                 print("BinaryII: Non-standard ID byte \(String(format: "$%02X", idByte))")
             }
 
-            // File length
+            // File length: 3 bytes
             let fileLength = UInt32(data[offset + 20]) |
                            (UInt32(data[offset + 21]) << 8) |
-                           (UInt32(data[offset + 22]) << 16) |
-                           (UInt32(data[offset + 23]) << 24)
+                           (UInt32(data[offset + 22]) << 16)
 
-            // Filename (null-terminated at bytes 24-63)
-            var filenameBytes: [UInt8] = []
-            for i in 24..<64 {
-                let byte = data[offset + i]
-                if byte == 0 { break }
-                filenameBytes.append(byte)
-            }
-            let filename = String(bytes: filenameBytes, encoding: .ascii) ?? ""
+            // Filename or partial pathname: length byte at +23, up to 64 characters at +24
+            let filenameLength = min(Int(data[offset + 23]), 64)
+            let filenameBytes = data[(offset + 24)..<(offset + 24 + filenameLength)].map { $0 & 0x7F }
+            let filename = String(decoding: filenameBytes, as: UTF8.self)
 
             // Data offset
             let dataOffset = offset + BinaryIIConstants.HEADER_SIZE
@@ -209,7 +204,7 @@ class BinaryIIWriter {
 
         for file in files {
             // Create header
-            var header = createHeader(for: file)
+            let header = createHeader(for: file)
 
             // Pad data to 128-byte boundary
             var fileData = file.data

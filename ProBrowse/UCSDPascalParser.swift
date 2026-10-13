@@ -33,20 +33,12 @@ class UCSDPascalParser {
     
     // UCSD Pascal block to .DSK sector mapping for Apple II
     //
-    // Empirically verified: Block 2 (directory) starts at DSK sector 11
-    // The second half of block 2 is at DSK sector 10 (the next file entries)
-    //
-    // Pattern determined by analyzing UCSD_Pascal_1_0_0.DSK:
-    // Block 0 -> DSK sectors 0, 1 (boot code)
-    // Block 1 -> DSK sectors 13, 14 or similar
-    // Block 2 -> DSK sectors 11, 10 (directory - confirmed!)
-    // Block 3 -> DSK sectors 9, 8
-    // Block 4 -> DSK sectors 7, 6
-    // Block 5 -> DSK sectors 5, 4
-    // Block 6 -> DSK sectors 3, 2
-    // Block 7 -> DSK sectors 15, 12
-    //
-    // This follows descending pairs from sector 11 down for blocks 2-6
+    // Pascal blocks use the same physical sectors as ProDOS blocks, so a
+    // DOS-ordered image stores the two halves of each block in these sectors:
+    // Block 0 -> 0, 14    Block 4 -> 7, 6
+    // Block 1 -> 13, 12   Block 5 -> 5, 4
+    // Block 2 -> 11, 10   Block 6 -> 3, 2
+    // Block 3 -> 9, 8     Block 7 -> 1, 15
     
     /// Read a 512-byte block, handling interleaving for floppy images
     private static func readBlock(_ data: Data, blockIndex: Int, isDOSOrder: Bool) -> Data? {
@@ -73,14 +65,14 @@ class UCSDPascalParser {
             let sector2: Int
             
             switch blockInTrack {
-            case 0: sector1 = 0;  sector2 = 1    // Block 0 - boot sectors
+            case 0: sector1 = 0;  sector2 = 14  // Block 0 - boot sectors
             case 1: sector1 = 13; sector2 = 12  // Block 1
             case 2: sector1 = 11; sector2 = 10  // Block 2 - DIRECTORY (verified!)
             case 3: sector1 = 9;  sector2 = 8   // Block 3
             case 4: sector1 = 7;  sector2 = 6   // Block 4
             case 5: sector1 = 5;  sector2 = 4   // Block 5
             case 6: sector1 = 3;  sector2 = 2   // Block 6
-            case 7: sector1 = 15; sector2 = 14  // Block 7
+            case 7: sector1 = 1;  sector2 = 15  // Block 7
             default: return nil
             }
             

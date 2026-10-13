@@ -94,17 +94,23 @@ class GzipArchive {
         return decompressDeflate(compressedData, expectedSize: origSize)
     }
 
+    /// Largest result the decompressors will produce. These archives hold Apple II
+    /// disk images; a bigger size in a header is damage or a decompression bomb.
+    static let maxDecompressedSize = 64 * 1024 * 1024
+
     /// Decompress raw deflate data
-    private static func decompressDeflate(_ data: Data, expectedSize: Int) -> Data? {
-        // Use Compression framework
-        let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: max(expectedSize, data.count * 10))
+    static func decompressDeflate(_ data: Data, expectedSize: Int) -> Data? {
+        // The size in the header is untrusted, so the buffer is capped
+        let capacity = min(max(expectedSize, data.count * 10), maxDecompressedSize)
+        guard capacity > 0 else { return nil }
+        let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
         defer { destinationBuffer.deallocate() }
 
         let decompressedSize = data.withUnsafeBytes { sourcePtr -> Int in
             guard let sourceBaseAddress = sourcePtr.baseAddress else { return 0 }
             return compression_decode_buffer(
                 destinationBuffer,
-                max(expectedSize, data.count * 10),
+                capacity,
                 sourceBaseAddress.assumingMemoryBound(to: UInt8.self),
                 data.count,
                 nil,
@@ -154,8 +160,64 @@ class ZipArchive {
         return ext.lowercased() == "zip"
     }
 
-    /// Parse ZIP archive and return list of entries
+    /// Parse ZIP archive and return list of entries.
+    /// The central directory is used when present: archives written as a stream
+    /// (Finder, ditto) leave the sizes in the local headers at zero.
     static func parseEntries(from data: Data) -> [ZipEntry] {
+        return parseCentralDirectory(data) ?? parseLocalHeaders(data)
+    }
+
+    private static func parseCentralDirectory(_ data: Data) -> [ZipEntry]? {
+        // The end-of-central-directory record sits at the end, before an optional comment
+        guard data.count >= 22 else { return nil }
+        var eocd = data.count - 22
+        let searchLimit = max(0, data.count - 22 - 0xFFFF)
+        while eocd >= searchLimit && !hasSignature(ZIP_END_OF_CENTRAL, in: data, at: eocd) {
+            eocd -= 1
+        }
+        guard eocd >= searchLimit else { return nil }
+
+        let entryCount = Int(readUInt16(data, offset: eocd + 10))
+        var offset = Int(readUInt32(data, offset: eocd + 16))
+        var entries: [ZipEntry] = []
+
+        for _ in 0..<entryCount {
+            guard offset + 46 <= data.count, hasSignature(ZIP_CENTRAL_HEADER, in: data, at: offset) else { return nil }
+
+            let filenameLength = Int(readUInt16(data, offset: offset + 28))
+            let extraLength = Int(readUInt16(data, offset: offset + 30))
+            let commentLength = Int(readUInt16(data, offset: offset + 32))
+            let localOffset = Int(readUInt32(data, offset: offset + 42))
+            guard offset + 46 + filenameLength <= data.count,
+                  localOffset + 30 <= data.count, hasSignature(ZIP_LOCAL_HEADER, in: data, at: localOffset) else { return nil }
+
+            let filenameData = data.subdata(in: (offset + 46)..<(offset + 46 + filenameLength))
+            // The local header has its own name and extra field lengths
+            let dataOffset = localOffset + 30 + Int(readUInt16(data, offset: localOffset + 26)) + Int(readUInt16(data, offset: localOffset + 28))
+
+            entries.append(ZipEntry(
+                filename: String(data: filenameData, encoding: .utf8) ?? String(data: filenameData, encoding: .ascii) ?? "",
+                compressedSize: readUInt32(data, offset: offset + 20),
+                uncompressedSize: readUInt32(data, offset: offset + 24),
+                compressionMethod: readUInt16(data, offset: offset + 10),
+                dataOffset: dataOffset,
+                crc32: readUInt32(data, offset: offset + 16),
+                modificationTime: parseDOSDateTime(readUInt16(data, offset: offset + 14), readUInt16(data, offset: offset + 12))
+            ))
+
+            offset += 46 + filenameLength + extraLength + commentLength
+        }
+
+        return entries
+    }
+
+    private static func hasSignature(_ signature: [UInt8], in data: Data, at offset: Int) -> Bool {
+        guard offset >= 0, offset + 4 <= data.count else { return false }
+        return (0..<4).allSatisfy { data[offset + $0] == signature[$0] }
+    }
+
+    /// Fallback for archives without a readable central directory
+    private static func parseLocalHeaders(_ data: Data) -> [ZipEntry] {
         var entries: [ZipEntry] = []
         var offset = 0
 
@@ -187,6 +249,7 @@ class ZipArchive {
 
             // Data offset
             let dataOffset = filenameEnd + extraLength
+            guard dataOffset <= data.count else { break }
 
             // Parse DOS time/date
             let modificationTime = parseDOSDateTime(modDate, modTime)
@@ -211,6 +274,7 @@ class ZipArchive {
 
     /// Extract a specific entry from a ZIP archive
     static func extractEntry(_ entry: ZipEntry, from data: Data) -> Data? {
+        guard entry.dataOffset >= 0, entry.dataOffset <= data.count else { return nil }
         let compressedData = data.subdata(
             in: entry.dataOffset..<min(entry.dataOffset + Int(entry.compressedSize), data.count)
         )
@@ -220,7 +284,7 @@ class ZipArchive {
             return compressedData
 
         case 8:  // Deflate
-            return decompressDeflate(compressedData, expectedSize: Int(entry.uncompressedSize))
+            return GzipArchive.decompressDeflate(compressedData, expectedSize: Int(entry.uncompressedSize))
 
         default:
             print("ZIP: Unsupported compression method \(entry.compressionMethod)")
@@ -292,28 +356,5 @@ class ZipArchive {
         components.second = second
 
         return Calendar.current.date(from: components)
-    }
-
-    private static func decompressDeflate(_ data: Data, expectedSize: Int) -> Data? {
-        let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: max(expectedSize, data.count * 10))
-        defer { destinationBuffer.deallocate() }
-
-        let decompressedSize = data.withUnsafeBytes { sourcePtr -> Int in
-            guard let sourceBaseAddress = sourcePtr.baseAddress else { return 0 }
-            return compression_decode_buffer(
-                destinationBuffer,
-                max(expectedSize, data.count * 10),
-                sourceBaseAddress.assumingMemoryBound(to: UInt8.self),
-                data.count,
-                nil,
-                COMPRESSION_ZLIB
-            )
-        }
-
-        if decompressedSize > 0 {
-            return Data(bytes: destinationBuffer, count: decompressedSize)
-        }
-
-        return nil
     }
 }

@@ -2,6 +2,33 @@
 
 All notable changes to ProBrowse will be documented in this file.
 
+## [2.6] - Unreleased
+
+### Fixed
+- **DOS 3.3 writing** - The free-sector map was read with its bytes swapped, so adding a file could overwrite existing data
+- **DOS-ordered ProDOS images (.dsk, .do)** - Block 7 of each track was read and written from the wrong sector
+- **Files with the same name in different directories** - Delete, rename and change type now act on the selected file
+- **Cut and paste** - A file is only removed from the source after it was copied; paste goes into the active pane
+- **Deleting a directory** - Its contents are deleted and their blocks freed
+- **ShrinkIt archives** - Archives now open; LZW/1 and LZW/2 decoding and thread layout corrected, checksums verified
+- **Binary II and ZIP archives** - Header layout corrected; ZIP files written by Finder now open
+- **Crashes** - 65816 disassembler, dates from 2028 on, large DOS 3.3 files, and several malformed-file cases
+- **Dates** - ProDOS years 2000-2039 and hour/minute order
+- **Viewers** - Screen dumps no longer mistaken for MacPaint; 640-mode APF pictures; Merlin columns; DOS 3.3 BASIC and binary files; monitor labels in the disassembler; AppleWorks characters and colors; Teach styles
+- **New .2mg images** now have a 2IMG header
+
+### Added
+- **File archives are browsable** - ShrinkIt and Binary II archives without a disk image open as a read-only catalog
+- **Errors are shown** - Failed imports, copies, deletes and loads report what went wrong
+- **Delete confirmation**, Delete key, Cmd+O / Cmd+Shift+O
+- **Multiple files** can be dropped from Finder at once
+- **Read-only protection** for images opened from inside an archive
+- **Tests** - `Tests/run-tests.sh`
+
+### Changed
+- The disk writers never allocate a block or sector that a file already uses, even if the disk's own free map says it is free
+- UCSD Pascal images in DOS order use the correct sector map
+
 ## [2.5] - 2026-01-26
 
 ### Improved

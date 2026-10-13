@@ -25,6 +25,8 @@ class FocusManager: ObservableObject {
     var clipboardEntries: [DiskCatalogEntry] = []
     var clipboardOperation: ClipboardOperation = .copy
     var clipboardSourcePath: URL?
+    var clipboardSourceIsDOS33 = false
+    weak var clipboardSourceVM: DiskPaneViewModel?
     
     static let shared = FocusManager()
     
@@ -39,16 +41,19 @@ class FocusManager: ObservableObject {
         return activePaneId == paneId
     }
     
-    func copyToClipboard(entries: [DiskCatalogEntry], operation: ClipboardOperation, sourcePath: URL) {
+    func copyToClipboard(entries: [DiskCatalogEntry], operation: ClipboardOperation, sourcePath: URL, source: DiskPaneViewModel) {
         clipboardEntries = entries
         clipboardOperation = operation
         clipboardSourcePath = sourcePath
+        clipboardSourceIsDOS33 = source.isDOS33
+        clipboardSourceVM = source
         print("📋 Clipboard: \(entries.count) items (\(operation))")
     }
     
     func clearClipboard() {
         clipboardEntries.removeAll()
         clipboardSourcePath = nil
+        clipboardSourceVM = nil
         print("🗑️ Clipboard cleared")
     }
     
