@@ -63,7 +63,7 @@ struct HelpWindow: View {
             }
         }
         .frame(width: 700, height: 500)
-        .navigationTitle("ProBrowse Help")
+        .navigationTitle("RetroBrowse Help")
     }
 
     @ViewBuilder
@@ -96,7 +96,7 @@ struct OverviewHelpView: View {
         VStack(alignment: .leading, spacing: 16) {
             HelpTitle("Getting Started")
 
-            Text("ProBrowse is a dual-pane file manager for Apple II disk images. It allows you to browse, copy, and manage files on vintage disk formats.")
+            Text("RetroBrowse is a dual-pane file manager for Apple II disk images. It allows you to browse, copy, and manage files on vintage disk formats.")
                 .helpBody()
 
             HelpSection("Quick Start") {
@@ -323,7 +323,7 @@ struct ShortcutsHelpView: View {
             HelpSection("Application") {
                 ShortcutRow(keys: "Cmd + N", action: "New disk image")
                 ShortcutRow(keys: "Cmd + O", action: "Open disk image")
-                ShortcutRow(keys: "Cmd + Q", action: "Quit ProBrowse")
+                ShortcutRow(keys: "Cmd + Q", action: "Quit RetroBrowse")
             }
         }
     }
@@ -336,7 +336,7 @@ struct GraphicsHelpView: View {
         VStack(alignment: .leading, spacing: 16) {
             HelpTitle("Graphics Preview")
 
-            Text("ProBrowse can display Apple II graphics files directly in the preview pane.")
+            Text("RetroBrowse can display Apple II graphics files directly in the preview pane.")
                 .helpBody()
 
             HelpSection("Supported Graphics Formats") {

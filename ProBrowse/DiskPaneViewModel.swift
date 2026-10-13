@@ -360,7 +360,7 @@ class DiskPaneViewModel: ObservableObject {
             
             print("Unknown disk format")
             showError("Could Not Open Disk Image",
-                      "\(url.lastPathComponent) is not a disk image or archive that ProBrowse can read.")
+                      "\(url.lastPathComponent) is not a disk image or archive that RetroBrowse can read.")
             
         } catch {
             print("Error loading disk image: \(error)")

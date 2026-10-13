@@ -53,7 +53,7 @@ struct ProBrowseApp: App {
             }
 
             CommandGroup(replacing: .help) {
-                Button("ProBrowse Help") {
+                Button("RetroBrowse Help") {
                     // Opened directly, so Help also works while the main window is closed
                     openWindow(id: "help-window")
                 }
@@ -61,15 +61,15 @@ struct ProBrowseApp: App {
 
                 Divider()
 
-                Button("Visit ProBrowse on GitHub") {
-                    if let url = URL(string: "https://github.com/portwally/ProBrowse") {
+                Button("Visit RetroBrowse on GitHub") {
+                    if let url = URL(string: "https://github.com/portwally/RetroBrowse") {
                         NSWorkspace.shared.open(url)
                     }
                 }
             }
         }
 
-        Window("ProBrowse Help", id: "help-window") {
+        Window("RetroBrowse Help", id: "help-window") {
             HelpWindow()
         }
         .defaultSize(width: 700, height: 500)

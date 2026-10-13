@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		3E053A732EFA8C96006EE433 /* ProBrowse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProBrowse.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3E053A732EFA8C96006EE433 /* RetroBrowse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RetroBrowse.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		3E053A742EFA8C96006EE433 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3E053A732EFA8C96006EE433 /* ProBrowse.app */,
+				3E053A732EFA8C96006EE433 /* RetroBrowse.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,7 +67,7 @@
 			packageProductDependencies = (
 			);
 			productName = ProBrowse;
-			productReference = 3E053A732EFA8C96006EE433 /* ProBrowse.app */;
+			productReference = 3E053A732EFA8C96006EE433 /* RetroBrowse.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -265,9 +265,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = portwally.ProBrowse;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = RetroBrowse;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -300,9 +300,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = portwally.ProBrowse;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = RetroBrowse;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
