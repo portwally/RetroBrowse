@@ -18,7 +18,6 @@ struct DiskBrowserPane: View {
     let paneId: PaneIdentifier
     var hideHeader: Bool = false
     
-    @State private var draggedEntries: [DiskCatalogEntry] = []
     @State private var isTargeted = false
     @StateObject private var focusManager = FocusManager.shared
     
@@ -316,7 +315,6 @@ struct DiskBrowserPane: View {
     private func createDragProvider(for entry: DiskCatalogEntry) -> NSItemProvider {
         // Dragging a selected row takes the whole selection; any other row is dragged on its own
         let selectedEntries = viewModel.isSelected(entry) ? viewModel.getSelectedEntries() : [entry]
-        draggedEntries = selectedEntries
         
         // Encode to JSON string, tagged with the image the entries come from
         do {
