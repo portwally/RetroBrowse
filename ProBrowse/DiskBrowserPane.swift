@@ -80,7 +80,7 @@ struct DiskBrowserPane: View {
         }
         .sheet(isPresented: $viewModel.showingInspector) {
             if let entry = viewModel.inspectorEntry {
-                FileInspectorSheet(entry: entry)
+                FileInspectorSheet(entry: entry, siblings: viewModel.siblings(of: entry))
             }
         }
     }

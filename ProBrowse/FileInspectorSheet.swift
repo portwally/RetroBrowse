@@ -11,6 +11,8 @@ import AppKit
 struct FileInspectorSheet: View {
     @Environment(\.dismiss) private var dismiss
     let entry: DiskCatalogEntry
+    /// The other files in the same folder, for formats that keep data in a companion file
+    var siblings: [DiskCatalogEntry] = []
 
     enum InspectorTab: String, CaseIterable {
         case content = "Content"
@@ -70,7 +72,7 @@ struct FileInspectorSheet: View {
             // Tab Content
             switch selectedTab {
             case .content:
-                FileContentView(entry: entry)
+                FileContentView(entry: entry, siblings: siblings)
             case .hex:
                 HexDumpView(data: entry.data)
             case .info:
@@ -164,6 +166,9 @@ struct FileInspectorSheet: View {
             return createAppleWorksPrintView()
         case .teach:
             return createTeachPrintView()
+        case .audio:
+            // Sound has nothing to print, so print the file's details instead
+            return createInfoPrintView()
         case .binary:
             return createHexPrintView()
         }
@@ -363,10 +368,14 @@ struct FileInspectorSheet: View {
         case icon
         case appleWorks
         case teach
+        case audio
         case binary
     }
 
     private func detectContentType() -> PrintContentType {
+        if AppleIIgsSoundDecoder.isAudio(fileType: entry.fileType, auxType: entry.auxType, data: entry.data) {
+            return .audio
+        }
         // Check by ProDOS file type
         switch entry.fileType {
         case 0x04:  // TXT
@@ -499,6 +508,7 @@ struct FileInspectorSheet: View {
 
 struct FileContentView: View {
     let entry: DiskCatalogEntry
+    var siblings: [DiskCatalogEntry] = []
 
     var body: some View {
         Group {
@@ -527,6 +537,8 @@ struct FileContentView: View {
                 AppleWorksView(entry: entry)
             case .teach:
                 TeachView(entry: entry)
+            case .audio:
+                AudioPreviewView(entry: entry, siblings: siblings)
             case .binary:
                 HexDumpView(data: entry.data)
             }
@@ -546,10 +558,14 @@ struct FileContentView: View {
         case icon
         case appleWorks
         case teach
+        case audio
         case binary
     }
 
     private func detectContentType() -> FileContentType {
+        if AppleIIgsSoundDecoder.isAudio(fileType: entry.fileType, auxType: entry.auxType, data: entry.data) {
+            return .audio
+        }
         // Check by ProDOS file type
         switch entry.fileType {
         case 0x04:  // TXT
