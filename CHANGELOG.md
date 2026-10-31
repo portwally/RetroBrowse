@@ -17,6 +17,7 @@ All notable changes to RetroBrowse will be documented in this file.
 - **Viewers** - Screen dumps no longer mistaken for MacPaint; 640-mode APF pictures; Merlin columns; DOS 3.3 BASIC and binary files; monitor labels in the disassembler; AppleWorks characters and colors; Teach styles
 - **New .2mg images** now have a 2IMG header
 - **AppleWorks GS documents** are read in full, not just their first text block
+- **Finder icons** - Icon files ($CA) are drawn in the Finder's 640-mode colors; they used the Apple II Lo-Res colors before
 
 ### Added
 - **File archives are browsable** - ShrinkIt and Binary II archives without a disk image open as a read-only catalog
