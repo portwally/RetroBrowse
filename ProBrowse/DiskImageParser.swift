@@ -557,7 +557,7 @@ class DiskImageParser {
                         fileData = extractProDOSFile(data: data, keyBlock: keyPointer, blocksUsed: blocksUsed, eof: eof, storageType: Int(storageType), isDOSOrder: isDOSOrder) ?? Data()
                     }
 
-                    let isGraphicsFile = [0x08, 0xC0, 0xC1].contains(fileType)
+                    let isGraphicsFile = [0x08, 0xC0, 0xC1, 0xC2].contains(fileType)
 
                     // Get proper file type info from ProDOSFileTypes
                     let fileTypeInfo = ProDOSFileTypeInfo.getFileTypeInfo(fileType: fileType, auxType: UInt16(auxType))

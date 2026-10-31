@@ -18,6 +18,9 @@ All notable changes to RetroBrowse will be documented in this file.
 - **New .2mg images** now have a 2IMG header
 - **AppleWorks GS documents** are read in full, not just their first text block
 - **Finder icons** - Icon files ($CA) are drawn in the Finder's 640-mode colors; they used the Apple II Lo-Res colors before
+- **Super Hi-Res previews** - The Apple IIgs decoders are now the ones from Retro Graphics Converter, so both apps show the same pictures: 640-mode screens are drawn 640 pixels wide in the right colors, DreamGrafix pictures (packed and unpacked) open instead of showing noise, Apple Preferred Format pictures larger than 400 lines and with odd widths open correctly, and PaintWorks pictures packed in other ways open
+- **More previews** - PaintWorks animations ($C2, first frame), packed 3200-color .3201 files and .PNT files saved as BIN, and Apple's packed Hi-Res and Double Hi-Res ($08) files now show a preview
+- **3200-color type on 32 KB screens** - Screens saved as $C1/$0002 but only 32 KB long are drawn as normal screens instead of with wrong colors
 
 ### Added
 - **File archives are browsable** - ShrinkIt and Binary II archives without a disk image open as a read-only catalog

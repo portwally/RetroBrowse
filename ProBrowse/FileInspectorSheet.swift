@@ -191,7 +191,8 @@ struct FileInspectorSheet: View {
 
     private func decodeGraphicsImage() -> NSImage? {
         // Try various graphics decoders
-        let result = AppleIIDecoder.detectAndDecode(data: entry.data, fileType: entry.fileType, auxType: entry.auxType)
+        let result = AppleIIDecoder.detectAndDecode(data: entry.data, fileType: entry.fileType, auxType: entry.auxType,
+                                                    filename: entry.name)
         if let cgImage = result.image {
             return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         }
@@ -406,6 +407,8 @@ struct FileInspectorSheet: View {
             return .graphics
         case 0xC1:  // PIC (SHR)
             return .graphics
+        case 0xC2:  // ANI (PaintWorks animation, first frame shown)
+            return .graphics
         case 0x07:  // FNT (Hi-Res Font)
             // Validate it's a valid hi-res font size
             if HiResFontDecoder.isHiResFont(entry.data) {
@@ -444,6 +447,12 @@ struct FileInspectorSheet: View {
             if size >= 8184 && size <= 8200 {
                 return true
             }
+        }
+
+        // Packed pictures saved as BIN, known by name: .3201 (packed 3200-color) and .PNT
+        let name = entry.name.uppercased()
+        if name.hasSuffix(".3201") || name.hasSuffix(".PNT") {
+            return true
         }
 
         // Common Apple II graphics sizes
@@ -581,6 +590,8 @@ struct FileContentView: View {
             return .graphics
         case 0xC1:  // PIC (SHR)
             return .graphics
+        case 0xC2:  // ANI (PaintWorks animation, first frame shown)
+            return .graphics
         case 0x07:  // FNT (Hi-Res Font)
             // Validate it's a valid hi-res font size
             if HiResFontDecoder.isHiResFont(entry.data) {
@@ -619,6 +630,12 @@ struct FileContentView: View {
             if size >= 8184 && size <= 8200 {
                 return true
             }
+        }
+
+        // Packed pictures saved as BIN, known by name: .3201 (packed 3200-color) and .PNT
+        let name = entry.name.uppercased()
+        if name.hasSuffix(".3201") || name.hasSuffix(".PNT") {
+            return true
         }
 
         // Common Apple II graphics sizes
@@ -975,7 +992,8 @@ struct GraphicsPreviewView: View {
             let result = AppleIIDecoder.detectAndDecode(
                 data: entry.data,
                 fileType: entry.fileType,
-                auxType: entry.auxType
+                auxType: entry.auxType,
+                filename: entry.name
             )
 
             DispatchQueue.main.async {

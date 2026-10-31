@@ -135,44 +135,65 @@ class AppleIIDecoder {
     // MARK: - Auto-detect and decode
 
     /// Attempt to detect and decode an Apple II graphics file
-    static func detectAndDecode(data: Data, fileType: UInt8, auxType: UInt16) -> (image: CGImage?, type: AppleIIImageType) {
+    /// Decode an Apple II or IIgs picture. The routing follows Retro Graphics Converter (SHRDecoder),
+    /// whose PackedSHRDecoder and DreamGrafixDecoder are shared with this app.
+    /// `filename` lets .3201 and .PNT files stored as BIN be recognized.
+    static func detectAndDecode(data: Data, fileType: UInt8, auxType: UInt16,
+                                filename: String? = nil) -> (image: CGImage?, type: AppleIIImageType) {
         let size = data.count
+        let name = (filename ?? "").lowercased()
 
         // Check by ProDOS file type first
         switch fileType {
-        case 0x08:  // FOT (Apple II Graphics File)
-            switch auxType {
-            case 0x4000:  // HGR
-                if let image = decodeHGR(data: data) {
-                    return (image, .HGR)
-                }
-            case 0x4001:  // DHGR
-                if let image = decodeDHGR(data: data) {
-                    return (image, .DHGR)
-                }
-            default:
-                break
-            }
-
-        case 0xC0:  // PNT (Packed Super Hi-Res)
-            if let result = PackedSHRDecoder.detectAndDecodePNT(data: data) {
+        case 0x08:  // FOT: raw screens are recognized by size below; Apple's packed Hi-Res ($4000)
+                    // and Double Hi-Res ($4001) use PackBytes (some carry aux $0000)
+            if !(8184...8200).contains(size) && size != 16384, let result = decodePackedFOT(data: data) {
                 return result
             }
 
-        case 0xC1:  // PIC (Super Hi-Res Picture)
+        case 0xC0:  // PNT (Packed Super Hi-Res)
+            var result: (image: CGImage?, type: AppleIIImageType)
             switch auxType {
-            case 0x0000:  // Standard SHR
-                if let image = decodeSHR(data: data, is3200Color: false) {
-                    return (image, .SHR(is3200Color: false))
-                }
-            case 0x0002:  // 3200 color
-                if let image = decodeSHR(data: data, is3200Color: true) {
-                    return (image, .SHR(is3200Color: true))
-                }
+            case 0x0000:
+                // PaintWorks. Some programs save a plain packed screen ($C0/$0001 layout) under
+                // aux $0000. A PaintWorks file starts with a palette whose high bytes are $0R;
+                // if it does not, try the packed screen first.
+                let looksLikePaintworks = size >= 0x222 && (0..<16).allSatisfy { data[$0 * 2 + 1] & 0xF0 == 0 }
+                result = (nil, .Unknown)
+                if !looksLikePaintworks { result = PackedSHRDecoder.decodePNT0001(data: data) }
+                if result.image == nil { result = PackedSHRDecoder.decodePNT0000(data: data) }
+                if result.image == nil { result = PackedSHRDecoder.decodePNT0001(data: data) }
+            case 0x0001:
+                result = PackedSHRDecoder.decodePNT0001(data: data)
+            case 0x0002, 0x0003:
+                result = PackedSHRDecoder.decodePNT0002(data: data)
+            case 0x8005:
+                result = DreamGrafixDecoder.decodeDreamGrafixPacked(data: data)
             default:
-                if let image = decodeSHR(data: data, is3200Color: false) {
-                    return (image, .SHR(is3200Color: false))
+                // Other aux types: an unpacked 32 KB screen is drawn by size below
+                result = (nil, .Unknown)
+                if !(32767...32768).contains(size) {
+                    result = PackedSHRDecoder.detectAndDecodePNT(data: data) ?? (nil, .Unknown)
                 }
+            }
+            if result.image != nil { return result }
+
+        case 0xC1:  // PIC (Super Hi-Res Picture)
+            if auxType == 0x8003 {
+                let result = DreamGrafixDecoder.decodeDreamGrafixUnpacked(data: data)
+                if result.image != nil { return result }
+            }
+            // 3200-color only when the file is big enough; some 32 KB screens carry aux $0002
+            if auxType == 0x0002 && size >= 38400, let image = decodeSHR(data: data, is3200Color: true) {
+                return (image, .SHR(is3200Color: true))
+            }
+            if size >= 32000, let image = decodeSHR(data: data, is3200Color: false) {
+                return (image, .SHR(is3200Color: false))
+            }
+
+        case 0xC2:  // ANI: a PaintWorks animation starts with a complete 32 KB screen (first frame)
+            if size >= 32768, let image = decodeSHR(data: data, is3200Color: false) {
+                return (image, .PackedSHR(mode: "Animation, first frame"))
             }
 
         case 0x06:  // BIN - a screen dump is recognised by its size below
@@ -191,6 +212,23 @@ class AppleIIDecoder {
 
         default:
             break
+        }
+
+        // Files without the right type: .3201 (packed 3200-color), .PNT, APF and DreamGrafix by signature
+        if name.hasSuffix(".3201"), let image = decode3201(data: data) {
+            return (image, .PackedSHR(mode: "3200 Packed"))
+        }
+        if name.hasSuffix(".pnt"), let result = PackedSHRDecoder.detectAndDecodePNT(data: data), result.image != nil {
+            return result
+        }
+        if let result = PackedSHRDecoder.tryDecodeAPF(data: data), result.image != nil {
+            return result
+        }
+        if DreamGrafixDecoder.isDreamGrafixFormat(data) {
+            let packed = DreamGrafixDecoder.decodeDreamGrafixPacked(data: data)
+            if packed.image != nil { return packed }
+            let unpacked = DreamGrafixDecoder.decodeDreamGrafixUnpacked(data: data)
+            if unpacked.image != nil { return unpacked }
         }
 
         // Fallback: detect by file size
@@ -230,45 +268,85 @@ class AppleIIDecoder {
         return (nil, .Unknown)
     }
 
+    /// Apple's packed Hi-Res and Double Hi-Res (FOT): PackBytes, told apart by the unpacked size
+    static func decodePackedFOT(data: Data) -> (image: CGImage?, type: AppleIIImageType)? {
+        let unpacked = PackedSHRDecoder.unpackBytes(data: data, maxOutputSize: 16384 + 64)
+        if (8184...8200).contains(unpacked.count) {
+            var screen = Data(unpacked.prefix(8192))
+            if screen.count < 8192 { screen.append(contentsOf: repeatElement(UInt8(0), count: 8192 - screen.count)) }
+            if let image = decodeHGR(data: screen) { return (image, .HGR) }
+        } else if unpacked.count == 16384, let image = decodeDHGR(data: unpacked) {
+            return (image, .DHGR)
+        }
+        return nil
+    }
+
+    /// .3201: "APP" + $00 (high ASCII), 200 palettes in 3200-color (Brooks) order, PackBytes pixels.
+    /// Unpacked pixels plus the palettes make a 3200-color screen.
+    static func decode3201(data: Data) -> CGImage? {
+        let hasHeader = data.count > 4 && data[0] == 0xC1 && data[1] == 0xD0 && data[2] == 0xD0 && data[3] == 0x00
+        let paletteOffset = hasHeader ? 4 : 0
+        guard data.count > paletteOffset + 6400 else { return nil }
+        let pixels = PackedSHRDecoder.unpackBytes(data: data.subdata(in: (paletteOffset + 6400)..<data.count),
+                                                  maxOutputSize: 32000)
+        guard pixels.count >= 32000 else { return nil }
+        var screen = Data(pixels.prefix(32000))
+        screen.append(data.subdata(in: paletteOffset..<(paletteOffset + 6400)))
+        return decodeSHR(data: screen, is3200Color: true)
+    }
+
     // MARK: - SHR Decoder (320x200, 32KB)
 
-    static func decodeSHR(data: Data, is3200Color: Bool) -> CGImage? {
-        let width = 320
+    /// Standard screens (`is3200Color` false) honor each line's SCB: palette number and 320/640 mode.
+    /// A screen with any 640-mode line is drawn 640 pixels wide, its 320-mode lines doubled.
+    /// `paletteOverride` replaces the 16 palettes stored in the file (palette editor).
+    static func decodeSHR(data: Data, is3200Color: Bool,
+                          paletteOverride: [[(r: UInt8, g: UInt8, b: UInt8)]]? = nil) -> CGImage? {
+        var width = 320
         let height = 200
-        var rgbaBuffer = [UInt8](repeating: 255, count: width * height * 4)
 
         let pixelDataStart = 0
         let scbOffset = 32000
         let standardPaletteOffset = 32256
         let brooksPaletteOffset = 32000
 
+        // Standard SHR requires at least 32768 bytes (32000 pixels + 256 SCB + 512 palette)
+        // But some files may have less - we need at least pixels + SCB + 1 palette (32000 + 256 + 32)
         guard data.count >= 32000 else { return nil }
 
         if !is3200Color {
             var palettes = [[(r: UInt8, g: UInt8, b: UInt8)]]()
 
+            // Read palettes (with bounds checking)
             for i in 0..<16 {
                 let pOffset = standardPaletteOffset + (i * 32)
-                if pOffset + 32 <= data.count {
+                if let override = paletteOverride, !override.isEmpty {
+                    palettes.append(i < override.count ? override[i] : override[0])
+                } else if pOffset + 32 <= data.count {
                     palettes.append(ImageHelpers.readPalette(from: data, offset: pOffset, reverseOrder: false))
                 } else {
+                    // Use default palette if not enough data
                     palettes.append(ImageHelpers.generateDefaultPalette())
                 }
             }
 
+            let scbs = (0..<height).map { scbOffset + $0 < data.count ? data[scbOffset + $0] : 0 }
+            if scbs.contains(where: { $0 & 0x80 != 0 }) { width = 640 }
+            var rgbaBuffer = [UInt8](repeating: 255, count: width * height * 4)
+
             for y in 0..<height {
-                let scb: UInt8
-                if scbOffset + y < data.count {
-                    scb = data[scbOffset + y]
+                let currentPalette = palettes[Int(scbs[y] & 0x0F)]
+                if scbs[y] & 0x80 != 0 {
+                    renderLine640(y: y, data: data, pixelStart: pixelDataStart, palette: currentPalette, to: &rgbaBuffer)
                 } else {
-                    scb = 0
+                    renderLine(y: y, data: data, pixelStart: pixelDataStart, palette: currentPalette, to: &rgbaBuffer,
+                               width: width, scale: width / 320)
                 }
-                let paletteIndex = Int(scb & 0x0F)
-                let currentPalette = palettes[paletteIndex]
-                renderSHRLine(y: y, data: data, pixelStart: pixelDataStart, palette: currentPalette, to: &rgbaBuffer, width: width)
             }
+            return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
 
         } else {
+            var rgbaBuffer = [UInt8](repeating: 255, count: width * height * 4)
             for y in 0..<height {
                 let pOffset = brooksPaletteOffset + (y * 32)
                 let currentPalette: [(r: UInt8, g: UInt8, b: UInt8)]
@@ -277,41 +355,43 @@ class AppleIIDecoder {
                 } else {
                     currentPalette = ImageHelpers.generateDefaultPalette()
                 }
-                renderSHRLine(y: y, data: data, pixelStart: pixelDataStart, palette: currentPalette, to: &rgbaBuffer, width: width)
+                renderLine(y: y, data: data, pixelStart: pixelDataStart, palette: currentPalette, to: &rgbaBuffer, width: width)
+            }
+            return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
+        }
+    }
+    
+    /// 320-mode line: two 4-bit pixels per byte. `scale` 2 doubles them on a 640-wide screen.
+    private static func renderLine(y: Int, data: Data, pixelStart: Int, palette: [(r: UInt8, g: UInt8, b: UInt8)],
+                                   to buffer: inout [UInt8], width: Int, scale: Int = 1) {
+        let lineStart = pixelStart + y * 160
+        for xByte in 0..<160 {
+            let byte = data[lineStart + xByte]
+            for (n, index) in [Int(byte >> 4), Int(byte & 0x0F)].enumerated() {
+                let c = palette[index]
+                for s in 0..<scale {
+                    let i = (y * width + (xByte * 2 + n) * scale + s) * 4
+                    buffer[i] = c.r; buffer[i + 1] = c.g; buffer[i + 2] = c.b; buffer[i + 3] = 255
+                }
             }
         }
-
-        return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
     }
 
-    private static func renderSHRLine(y: Int, data: Data, pixelStart: Int, palette: [(r: UInt8, g: UInt8, b: UInt8)], to buffer: inout [UInt8], width: Int) {
-        let bytesPerLine = 160
-        let lineStart = pixelStart + (y * bytesPerLine)
-
-        guard lineStart + bytesPerLine <= data.count else { return }
-
-        for xByte in 0..<bytesPerLine {
+    /// 640-mode line: four 2-bit pixels per byte, each using its own quarter of the palette
+    /// (colors 8-11, 12-15, 0-3, 4-7), on a 640-wide screen
+    private static func renderLine640(y: Int, data: Data, pixelStart: Int, palette: [(r: UInt8, g: UInt8, b: UInt8)],
+                                      to buffer: inout [UInt8]) {
+        let lineStart = pixelStart + y * 160
+        for xByte in 0..<160 {
             let byte = data[lineStart + xByte]
-
-            let idx1 = (byte & 0xF0) >> 4
-            let idx2 = (byte & 0x0F)
-
-            let c1 = palette[Int(idx1)]
-            let bufferIdx1 = (y * width + (xByte * 2)) * 4
-            buffer[bufferIdx1]     = c1.r
-            buffer[bufferIdx1 + 1] = c1.g
-            buffer[bufferIdx1 + 2] = c1.b
-            buffer[bufferIdx1 + 3] = 255
-
-            let c2 = palette[Int(idx2)]
-            let bufferIdx2 = (y * width + (xByte * 2) + 1) * 4
-            buffer[bufferIdx2]     = c2.r
-            buffer[bufferIdx2 + 1] = c2.g
-            buffer[bufferIdx2 + 2] = c2.b
-            buffer[bufferIdx2 + 3] = 255
+            for n in 0..<4 {
+                let c = palette[[8, 12, 0, 4][n] + Int((byte >> (6 - n * 2)) & 0x03)]
+                let i = (y * 640 + xByte * 4 + n) * 4
+                buffer[i] = c.r; buffer[i + 1] = c.g; buffer[i + 2] = c.b; buffer[i + 3] = 255
+            }
         }
     }
-
+    
     // MARK: - DHGR Decoder (560x192, 16KB)
 
     static func decodeDHGR(data: Data) -> CGImage? {
@@ -479,506 +559,5 @@ class AppleIIDecoder {
         }
 
         return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
-    }
-}
-
-// MARK: - Packed SHR Decoder
-
-class PackedSHRDecoder {
-
-    // MARK: - Apple IIgs PackBytes Decompression
-
-    static func unpackBytes(data: Data, maxOutputSize: Int = 65536) -> Data {
-        var output = Data()
-        output.reserveCapacity(min(maxOutputSize, data.count * 4))
-
-        var pos = 0
-
-        while pos < data.count && output.count < maxOutputSize {
-            let flag = data[pos]
-            pos += 1
-
-            let flagCount = Int(flag & 0x3F) + 1
-            let mode = flag & 0xC0
-
-            switch mode {
-            case 0x00:  // Literal: copy next flagCount bytes
-                let bytesToCopy = min(flagCount, data.count - pos, maxOutputSize - output.count)
-                if bytesToCopy > 0 {
-                    output.append(data.subdata(in: pos..<(pos + bytesToCopy)))
-                    pos += bytesToCopy
-                }
-
-            case 0x40:  // Repeat 8-bit value flagCount times
-                if pos < data.count {
-                    let repeatByte = data[pos]
-                    pos += 1
-                    let bytesToWrite = min(flagCount, maxOutputSize - output.count)
-                    output.append(contentsOf: repeatElement(repeatByte, count: bytesToWrite))
-                }
-
-            case 0x80:  // Repeat 32-bit pattern flagCount times
-                if pos + 4 <= data.count {
-                    let pattern = Array(data[pos..<(pos + 4)])
-                    pos += 4
-                    for _ in 0..<flagCount {
-                        if output.count + 4 <= maxOutputSize {
-                            output.append(contentsOf: pattern)
-                        } else {
-                            let remaining = maxOutputSize - output.count
-                            output.append(contentsOf: pattern.prefix(remaining))
-                            break
-                        }
-                    }
-                }
-
-            case 0xC0:  // Repeat 8-bit value flagCount * 4 times
-                if pos < data.count {
-                    let repeatByte = data[pos]
-                    pos += 1
-                    let bytesToWrite = min(flagCount * 4, maxOutputSize - output.count)
-                    output.append(contentsOf: repeatElement(repeatByte, count: bytesToWrite))
-                }
-
-            default:
-                break
-            }
-        }
-
-        return output
-    }
-
-    // MARK: - Detection and Decoding
-
-    static func detectAndDecodePNT(data: Data) -> (image: CGImage?, type: AppleIIImageType)? {
-        // Try APF format first
-        if isAPFFormat(data) {
-            return decodeAPF(data: data)
-        }
-
-        // Try Paintworks format. The check is weak (a packed screen that starts
-        // black passes it), so carry on if the file does not decode that way.
-        if isPaintworksFormat(data), let result = decodePaintworks(data: data) {
-            return result
-        }
-
-        // Try PackBytes compressed
-        if let result = tryDecodePackedSHR(data: data) {
-            return result
-        }
-
-        return nil
-    }
-
-    private static func isAPFFormat(_ data: Data) -> Bool {
-        guard data.count >= 20 else { return false }
-
-        let blockLength = Int(data[0]) | (Int(data[1]) << 8) | (Int(data[2]) << 16) | (Int(data[3]) << 24)
-        guard blockLength >= 10 && blockLength <= data.count else { return false }
-
-        let nameLength = Int(data[4])
-        guard nameLength >= 4 && nameLength <= 15 && 5 + nameLength <= data.count else { return false }
-
-        let nameData = data[5..<(5 + nameLength)]
-        guard let blockName = String(data: nameData, encoding: .ascii) else { return false }
-
-        return ["MAIN", "PATS", "SCIB", "PALETTES", "MASK", "MULTIPAL", "NOTE"].contains(blockName)
-    }
-
-    private static func isPaintworksFormat(_ data: Data) -> Bool {
-        guard data.count >= 0x222 else { return false }
-        for i in 0..<16 {
-            if (data[i * 2 + 1] & 0xF0) != 0 { return false }
-        }
-        return true
-    }
-
-    // MARK: - APF Decoder
-
-    private static func decodeAPF(data: Data) -> (image: CGImage?, type: AppleIIImageType)? {
-        var blocks: [(name: String, data: Data)] = []
-        var pos = 0
-
-        while pos + 5 <= data.count {
-            let blockLength = Int(data[pos]) | (Int(data[pos + 1]) << 8) |
-                             (Int(data[pos + 2]) << 16) | (Int(data[pos + 3]) << 24)
-
-            guard blockLength >= 5 && pos + blockLength <= data.count else { break }
-
-            let nameLength = Int(data[pos + 4])
-            guard nameLength > 0 && nameLength <= 20 && pos + 5 + nameLength <= data.count else { break }
-
-            let nameData = data[(pos + 5)..<(pos + 5 + nameLength)]
-            guard let blockName = String(data: nameData, encoding: .ascii) else { break }
-
-            let dataOffset = pos + 5 + nameLength
-            let dataLength = blockLength - 5 - nameLength
-
-            if dataLength > 0 && dataOffset + dataLength <= data.count {
-                let blockData = data.subdata(in: dataOffset..<(dataOffset + dataLength))
-                blocks.append((name: blockName, data: blockData))
-            }
-
-            pos += blockLength
-        }
-
-        guard let mainBlock = blocks.first(where: { $0.name == "MAIN" }) else {
-            return nil
-        }
-
-        // Parse MAIN block
-        guard let mainData = parseMAINBlock(mainBlock.data) else {
-            return nil
-        }
-
-        // Check for MULTIPAL (3200 color mode)
-        var palettes3200: [[(r: UInt8, g: UInt8, b: UInt8)]]? = nil
-        if let multipalBlock = blocks.first(where: { $0.name == "MULTIPAL" }) {
-            palettes3200 = parseMULTIPALBlock(multipalBlock.data)
-        }
-
-        let image: CGImage?
-        let modeString: String
-
-        if let palettes = palettes3200, palettes.count >= mainData.numScanLines {
-            image = renderSHR3200(mainData: mainData, palettes: palettes)
-            modeString = "APF 3200"
-        } else {
-            image = renderSHRStandard(mainData: mainData)
-            modeString = "APF"
-        }
-
-        return (image, .PackedSHR(mode: modeString))
-    }
-
-    private struct MAINBlockData {
-        let masterMode: UInt16
-        let pixelsPerScanLine: Int
-        let colorTables: [[(r: UInt8, g: UInt8, b: UInt8)]]
-        let numScanLines: Int
-        let scanLineDirectory: [(packedBytes: Int, mode: UInt16)]
-        let pixels: Data
-    }
-
-    private static func parseMAINBlock(_ data: Data) -> MAINBlockData? {
-        var pos = 0
-
-        guard pos + 6 <= data.count else { return nil }
-
-        let masterMode = UInt16(data[pos]) | (UInt16(data[pos + 1]) << 8)
-        let pixelsPerScanLine = Int(data[pos + 2]) | (Int(data[pos + 3]) << 8)
-        let numColorTables = Int(data[pos + 4]) | (Int(data[pos + 5]) << 8)
-        pos += 6
-
-        guard pixelsPerScanLine > 0 && pixelsPerScanLine <= 1280 else { return nil }
-
-        var colorTables: [[(r: UInt8, g: UInt8, b: UInt8)]] = []
-        for _ in 0..<numColorTables {
-            guard pos + 32 <= data.count else { break }
-            colorTables.append(readColorTable(from: data, at: pos))
-            pos += 32
-        }
-
-        guard pos + 2 <= data.count else { return nil }
-        let numScanLines = Int(data[pos]) | (Int(data[pos + 1]) << 8)
-        pos += 2
-
-        guard numScanLines > 0 && numScanLines <= 400 else { return nil }
-
-        var scanLineDirectory: [(packedBytes: Int, mode: UInt16)] = []
-        for _ in 0..<numScanLines {
-            guard pos + 4 <= data.count else { break }
-            let packedBytes = Int(data[pos]) | (Int(data[pos + 1]) << 8)
-            let mode = UInt16(data[pos + 2]) | (UInt16(data[pos + 3]) << 8)
-            scanLineDirectory.append((packedBytes: packedBytes, mode: mode))
-            pos += 4
-        }
-
-        guard scanLineDirectory.count == numScanLines else { return nil }
-
-        // 640 mode packs four pixels into a byte, 320 mode two
-        let bytesPerLine = (masterMode & 0x80) != 0 ? pixelsPerScanLine / 4 : pixelsPerScanLine / 2
-        var allPixels = Data()
-        allPixels.reserveCapacity(bytesPerLine * numScanLines)
-
-        for entry in scanLineDirectory {
-            guard pos + entry.packedBytes <= data.count else {
-                allPixels.append(contentsOf: repeatElement(UInt8(0), count: bytesPerLine))
-                continue
-            }
-
-            let packedLine = data.subdata(in: pos..<(pos + entry.packedBytes))
-            pos += entry.packedBytes
-
-            var unpackedLine = unpackBytes(data: packedLine, maxOutputSize: bytesPerLine)
-
-            if unpackedLine.count < bytesPerLine {
-                unpackedLine.append(contentsOf: repeatElement(UInt8(0), count: bytesPerLine - unpackedLine.count))
-            }
-
-            allPixels.append(unpackedLine.prefix(bytesPerLine))
-        }
-
-        return MAINBlockData(
-            masterMode: masterMode,
-            pixelsPerScanLine: pixelsPerScanLine,
-            colorTables: colorTables,
-            numScanLines: numScanLines,
-            scanLineDirectory: scanLineDirectory,
-            pixels: allPixels
-        )
-    }
-
-    private static func parseMULTIPALBlock(_ data: Data) -> [[(r: UInt8, g: UInt8, b: UInt8)]]? {
-        guard data.count >= 2 else { return nil }
-
-        let numColorTables = Int(data[0]) | (Int(data[1]) << 8)
-        guard numColorTables > 0 && numColorTables <= 400 else { return nil }
-
-        var palettes: [[(r: UInt8, g: UInt8, b: UInt8)]] = []
-        var pos = 2
-
-        for _ in 0..<numColorTables {
-            guard pos + 32 <= data.count else { break }
-            palettes.append(readColorTable(from: data, at: pos))
-            pos += 32
-        }
-
-        return palettes.isEmpty ? nil : palettes
-    }
-
-    private static func readColorTable(from data: Data, at offset: Int) -> [(r: UInt8, g: UInt8, b: UInt8)] {
-        var colors: [(r: UInt8, g: UInt8, b: UInt8)] = []
-
-        for i in 0..<16 {
-            let entryOffset = offset + (i * 2)
-            guard entryOffset + 1 < data.count else {
-                colors.append((0, 0, 0))
-                continue
-            }
-
-            let low = data[entryOffset]
-            let high = data[entryOffset + 1]
-
-            let red = high & 0x0F
-            let green = (low >> 4) & 0x0F
-            let blue = low & 0x0F
-
-            colors.append((r: red * 17, g: green * 17, b: blue * 17))
-        }
-
-        return colors
-    }
-
-    private static func renderSHRStandard(mainData: MAINBlockData) -> CGImage? {
-        let width = mainData.pixelsPerScanLine
-        let height = mainData.numScanLines
-        let is640 = (mainData.masterMode & 0x80) != 0
-        let bytesPerLine = is640 ? width / 4 : width / 2
-
-        var rgbaBuffer = [UInt8](repeating: 0, count: width * height * 4)
-
-        let defaultPalette: [(r: UInt8, g: UInt8, b: UInt8)] = [
-            (0,0,0), (221,0,51), (0,0,153), (221,34,153),
-            (0,119,34), (85,85,85), (34,34,255), (102,170,255),
-            (136,85,0), (255,102,0), (170,170,170), (255,153,136),
-            (17,221,0), (255,255,0), (68,255,153), (255,255,255)
-        ]
-
-        for y in 0..<height {
-            let lineOffset = y * bytesPerLine
-            let entry = y < mainData.scanLineDirectory.count ? mainData.scanLineDirectory[y] : (packedBytes: 0, mode: UInt16(0))
-            let paletteIndex = Int(entry.mode & 0x0F)
-
-            let palette = paletteIndex < mainData.colorTables.count ?
-                         mainData.colorTables[paletteIndex] :
-                         (mainData.colorTables.first ?? defaultPalette)
-
-            for xByte in 0..<bytesPerLine {
-                let dataIndex = lineOffset + xByte
-                guard dataIndex < mainData.pixels.count else { continue }
-                let byte = mainData.pixels[dataIndex]
-
-                if is640 {
-                    // Four 2-bit pixels; each column of the four uses its own quarter of the palette
-                    let paletteBase = [8, 12, 0, 4]
-                    for column in 0..<4 {
-                        let x = xByte * 4 + column
-                        let colorIndex = paletteBase[column] + Int((byte >> UInt8(6 - column * 2)) & 0x03)
-                        guard x < width, colorIndex < palette.count else { continue }
-                        let color = palette[colorIndex]
-                        let bufIdx = (y * width + x) * 4
-                        rgbaBuffer[bufIdx] = color.0
-                        rgbaBuffer[bufIdx + 1] = color.1
-                        rgbaBuffer[bufIdx + 2] = color.2
-                        rgbaBuffer[bufIdx + 3] = 255
-                    }
-                    continue
-                }
-
-                let x = xByte * 2
-
-                let colorIndex1 = Int((byte >> 4) & 0x0F)
-                let color1 = colorIndex1 < palette.count ? palette[colorIndex1] : (0, 0, 0)
-
-                if x < width {
-                    let bufIdx1 = (y * width + x) * 4
-                    rgbaBuffer[bufIdx1] = color1.0
-                    rgbaBuffer[bufIdx1 + 1] = color1.1
-                    rgbaBuffer[bufIdx1 + 2] = color1.2
-                    rgbaBuffer[bufIdx1 + 3] = 255
-                }
-
-                let colorIndex2 = Int(byte & 0x0F)
-                let color2 = colorIndex2 < palette.count ? palette[colorIndex2] : (0, 0, 0)
-
-                if x + 1 < width {
-                    let bufIdx2 = (y * width + x + 1) * 4
-                    rgbaBuffer[bufIdx2] = color2.0
-                    rgbaBuffer[bufIdx2 + 1] = color2.1
-                    rgbaBuffer[bufIdx2 + 2] = color2.2
-                    rgbaBuffer[bufIdx2 + 3] = 255
-                }
-            }
-        }
-
-        return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
-    }
-
-    private static func renderSHR3200(mainData: MAINBlockData, palettes: [[(r: UInt8, g: UInt8, b: UInt8)]]) -> CGImage? {
-        let width = mainData.pixelsPerScanLine
-        let height = mainData.numScanLines
-        let bytesPerLine = width / 2
-
-        var rgbaBuffer = [UInt8](repeating: 0, count: width * height * 4)
-
-        for y in 0..<height {
-            let lineOffset = y * bytesPerLine
-            let palette = y < palettes.count ? palettes[y] : ImageHelpers.generateDefaultPalette()
-
-            for xByte in 0..<bytesPerLine {
-                let dataIndex = lineOffset + xByte
-                guard dataIndex < mainData.pixels.count else { continue }
-                let byte = mainData.pixels[dataIndex]
-
-                let x = xByte * 2
-
-                let colorIndex1 = Int((byte >> 4) & 0x0F)
-                let color1 = colorIndex1 < palette.count ? palette[colorIndex1] : (0, 0, 0)
-
-                let bufIdx1 = (y * width + x) * 4
-                guard bufIdx1 + 3 < rgbaBuffer.count else { continue }
-                rgbaBuffer[bufIdx1] = color1.0
-                rgbaBuffer[bufIdx1 + 1] = color1.1
-                rgbaBuffer[bufIdx1 + 2] = color1.2
-                rgbaBuffer[bufIdx1 + 3] = 255
-
-                let colorIndex2 = Int(byte & 0x0F)
-                let color2 = colorIndex2 < palette.count ? palette[colorIndex2] : (0, 0, 0)
-
-                let bufIdx2 = (y * width + x + 1) * 4
-                guard bufIdx2 + 3 < rgbaBuffer.count else { continue }
-                rgbaBuffer[bufIdx2] = color2.0
-                rgbaBuffer[bufIdx2 + 1] = color2.1
-                rgbaBuffer[bufIdx2 + 2] = color2.2
-                rgbaBuffer[bufIdx2 + 3] = 255
-            }
-        }
-
-        return ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height)
-    }
-
-    // MARK: - Paintworks Decoder
-
-    private static func decodePaintworks(data: Data) -> (image: CGImage?, type: AppleIIImageType)? {
-        guard data.count >= 0x222 else { return nil }
-
-        var palette: [(r: UInt8, g: UInt8, b: UInt8)] = []
-        for i in 0..<16 {
-            let low = data[i * 2]
-            let high = data[i * 2 + 1]
-            let red = high & 0x0F
-            let green = (low >> 4) & 0x0F
-            let blue = low & 0x0F
-            palette.append((r: red * 17, g: green * 17, b: blue * 17))
-        }
-
-        let startOffset = 0x222
-        guard data.count > startOffset else { return nil }
-
-        let remainingData = data.subdata(in: startOffset..<data.count)
-        let width = 320
-        let bytesPerLine = 160
-
-        var unpackedData: Data?
-        var decodedHeight = 200
-
-        // Try PackBytes decompression
-        let packedBytes = unpackBytes(data: remainingData, maxOutputSize: 64000)
-        if packedBytes.count >= 32000 {
-            unpackedData = packedBytes
-            decodedHeight = min(packedBytes.count / bytesPerLine, 396)
-        }
-
-        // Try uncompressed
-        if unpackedData == nil || unpackedData!.count < 32000 {
-            if remainingData.count >= 32000 && remainingData.count <= 33000 {
-                unpackedData = remainingData.prefix(32000)
-                decodedHeight = 200
-            }
-        }
-
-        guard let finalData = unpackedData, finalData.count >= bytesPerLine else {
-            return nil
-        }
-
-        let height = min(decodedHeight, finalData.count / bytesPerLine)
-        guard height > 0 else { return nil }
-
-        var rgbaBuffer = [UInt8](repeating: 0, count: width * height * 4)
-
-        for y in 0..<height {
-            for xByte in 0..<bytesPerLine {
-                let dataIndex = y * bytesPerLine + xByte
-                guard dataIndex < finalData.count else { continue }
-                let byte = finalData[dataIndex]
-
-                let x = xByte * 2
-
-                let color1 = palette[Int((byte >> 4) & 0x0F)]
-                let bufIdx1 = (y * width + x) * 4
-                rgbaBuffer[bufIdx1] = color1.0
-                rgbaBuffer[bufIdx1 + 1] = color1.1
-                rgbaBuffer[bufIdx1 + 2] = color1.2
-                rgbaBuffer[bufIdx1 + 3] = 255
-
-                let color2 = palette[Int(byte & 0x0F)]
-                let bufIdx2 = (y * width + x + 1) * 4
-                rgbaBuffer[bufIdx2] = color2.0
-                rgbaBuffer[bufIdx2 + 1] = color2.1
-                rgbaBuffer[bufIdx2 + 2] = color2.2
-                rgbaBuffer[bufIdx2 + 3] = 255
-            }
-        }
-
-        guard let cgImage = ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height) else {
-            return nil
-        }
-
-        return (cgImage, .PackedSHR(mode: "Paintworks"))
-    }
-
-    // MARK: - Generic Packed SHR
-
-    private static func tryDecodePackedSHR(data: Data) -> (image: CGImage?, type: AppleIIImageType)? {
-        let unpackedData = unpackBytes(data: data, maxOutputSize: 65536)
-
-        guard unpackedData.count >= 32000 else { return nil }
-
-        if let image = AppleIIDecoder.decodeSHR(data: unpackedData, is3200Color: false) {
-            return (image, .PackedSHR(mode: "Packed"))
-        }
-
-        return nil
     }
 }
