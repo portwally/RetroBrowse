@@ -136,6 +136,12 @@ struct ContentView: View {
                     return nil
                 }
                 
+                // Space inspects the selected file, like the Inspect button (and Quick Look in Finder)
+                if modifiers.isEmpty && event.keyCode == 49 && activeVM.canInspect {
+                    activeVM.inspectSelectedFile()
+                    return nil
+                }
+                
                 if modifiers == .command {
                     switch event.charactersIgnoringModifiers {
                     case "c":
@@ -249,7 +255,7 @@ struct ToolbarView: View {
                     action: onInspectLeft,
                     disabled: !canInspectLeft
                 )
-                .help("Inspect selected file (⌘I)")
+                .help("Inspect selected file (Space or ⌘I)")
 
                 if leftSelectionCount > 0 {
                     Text("\(leftSelectionCount)")
@@ -287,7 +293,7 @@ struct ToolbarView: View {
                     action: onInspectRight,
                     disabled: !canInspectRight
                 )
-                .help("Inspect selected file (⌘I)")
+                .help("Inspect selected file (Space or ⌘I)")
 
                 ToolbarButton(
                     icon: "square.and.arrow.up",

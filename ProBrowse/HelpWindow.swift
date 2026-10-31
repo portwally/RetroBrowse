@@ -206,7 +206,7 @@ struct FileInspectorHelpView: View {
 
             HelpSection("Opening the Inspector") {
                 HelpBullet("Right-click a file and select \"Inspect File...\"")
-                HelpBullet("Or press **Cmd+I** with a file selected")
+                HelpBullet("Or press **Space** or **Cmd+I** with a file selected")
                 HelpBullet("Or click the magnifying glass icon in the toolbar")
             }
 
@@ -314,7 +314,7 @@ struct ShortcutsHelpView: View {
             }
 
             HelpSection("Navigation") {
-                ShortcutRow(keys: "Cmd + I", action: "Inspect File")
+                ShortcutRow(keys: "Space or Cmd + I", action: "Inspect File")
                 ShortcutRow(keys: "Double-click", action: "Open directory")
                 ShortcutRow(keys: "Cmd + click", action: "Add to selection")
                 ShortcutRow(keys: "Shift + click", action: "Range selection")
