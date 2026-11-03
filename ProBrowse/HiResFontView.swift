@@ -173,17 +173,19 @@ class HiResFontDecoder {
         }
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: &pixels,
-            width: scaledWidth,
-            height: scaledHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: scaledWidth * 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        return context.makeImage()
+        // Keep the buffer pointer valid until makeImage() has copied it
+        return pixels.withUnsafeMutableBytes { buffer -> CGImage? in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: scaledWidth,
+                height: scaledHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: scaledWidth * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            return context.makeImage()
+        }
     }
 
     /// Render the entire font grid as a CGImage
@@ -272,17 +274,19 @@ class HiResFontDecoder {
         }
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: &pixels,
-            width: totalWidth,
-            height: totalHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: totalWidth * 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        return context.makeImage()
+        // Keep the buffer pointer valid until makeImage() has copied it
+        return pixels.withUnsafeMutableBytes { buffer -> CGImage? in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: totalWidth,
+                height: totalHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: totalWidth * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            return context.makeImage()
+        }
     }
 
     /// Render sample text using the font
@@ -338,17 +342,19 @@ class HiResFontDecoder {
         }
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: &pixels,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        return context.makeImage()
+        // Keep the buffer pointer valid until makeImage() has copied it
+        return pixels.withUnsafeMutableBytes { buffer -> CGImage? in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            return context.makeImage()
+        }
     }
 }
 

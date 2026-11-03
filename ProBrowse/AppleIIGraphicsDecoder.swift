@@ -404,9 +404,10 @@ class AppleIIDecoder {
         let mainData = data.subdata(in: 0..<8192)
         let auxData = data.subdata(in: 8192..<16384)
 
+        // Indexed with the leftmost bit as bit 0 (IIe Tech Ref patterns: aux $11 = dark blue)
         let dhgrPalette: [(r: UInt8, g: UInt8, b: UInt8)] = [
             (0, 0, 0),           // 0: Black
-            (134, 18, 192),      // 1: Magenta
+            (0, 0, 153),         // 1: Dark Blue
             (0, 101, 43),        // 2: Dark Green
             (48, 48, 255),       // 3: Blue
             (165, 95, 0),        // 4: Brown

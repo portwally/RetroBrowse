@@ -311,11 +311,12 @@ class AppleIIgsIconDecoder {
     /// Fallback: Scan for icon entries by looking for 0x8000 color icon type markers
     private static func scanForIconTypeMarkers(data: Data) -> [AppleIIgsIconEntry]? {
         var entries: [AppleIIgsIconEntry] = []
-        var foundOffsets = Set<Int>()
+        // Offsets only increase, so the last found icon is the nearest one
+        var lastFoundOffset: Int?
 
         var offset = 0x20  // Start after minimal header
         while offset < data.count - 20 {
-            if foundOffsets.contains(where: { abs($0 - offset) < 50 }) {
+            if let last = lastFoundOffset, abs(last - offset) < 50 {
                 offset += 2
                 continue
             }
@@ -341,7 +342,7 @@ class AppleIIgsIconDecoder {
 
                         let pathname = findPathnameBeforeOffset(in: data, iconOffset: offset) ?? "Icon \(entries.count + 1)"
                         entries.append(AppleIIgsIconEntry(pathname: pathname, largeIcon: icon, smallIcon: smallIcon))
-                        foundOffsets.insert(offset)
+                        lastFoundOffset = offset
                         offset = nextPos + 20
                         continue
                     }
@@ -479,9 +480,10 @@ class AppleIIgsIconDecoder {
                         let destY = y * scale + sy
                         let destIndex = (destY * scaledWidth + destX) * 4
 
-                        pixels[destIndex + 0] = color.r
-                        pixels[destIndex + 1] = color.g
-                        pixels[destIndex + 2] = color.b
+                        // Premultiplied alpha: masked-out pixels must be all zero
+                        pixels[destIndex + 0] = isTransparent ? 0 : color.r
+                        pixels[destIndex + 1] = isTransparent ? 0 : color.g
+                        pixels[destIndex + 2] = isTransparent ? 0 : color.b
                         pixels[destIndex + 3] = alpha
                     }
                 }

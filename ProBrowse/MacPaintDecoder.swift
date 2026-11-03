@@ -28,8 +28,27 @@ class MacPaintDecoder {
     static let VERSION_2 = 2
     static let VERSION_3 = 3
 
+    /// Remove a 128-byte MacBinary header (file type 'PNTG') and anything after the data fork.
+    /// Other data is returned unchanged.
+    static func stripMacBinary(_ data: Data) -> Data {
+        let b = data.startIndex
+        guard data.count > 128,
+              data[b] == 0, data[b + 74] == 0,
+              data[b + 1] >= 1, data[b + 1] <= 63,
+              data[b + 65] == 0x50, data[b + 66] == 0x4E,   // "PN"
+              data[b + 67] == 0x54, data[b + 68] == 0x47    // "TG"
+        else { return data }
+
+        // Data fork length (big-endian) at offset 83
+        let forkLength = Int(data[b + 83]) << 24 | Int(data[b + 84]) << 16 |
+                         Int(data[b + 85]) << 8 | Int(data[b + 86])
+        let end = forkLength > 0 && forkLength <= data.count - 128 ? 128 + forkLength : data.count
+        return Data(data[(b + 128)..<(b + end)])
+    }
+
     /// Check if data looks like a MacPaint file
     static func isMacPaint(_ data: Data) -> Bool {
+        let data = stripMacBinary(data)
         guard data.count >= MIN_FILE_SIZE else { return false }
 
         // Check version number (big-endian 32-bit)
@@ -66,6 +85,7 @@ class MacPaintDecoder {
 
     /// Decode MacPaint file to CGImage
     static func decode(_ data: Data) -> CGImage? {
+        let data = stripMacBinary(data)
         guard data.count >= MIN_FILE_SIZE else { return nil }
 
         // Decompress the bitmap data
@@ -183,6 +203,7 @@ class MacPaintDecoder {
 
     /// Get pattern data from header (for version 2 files)
     static func getPatterns(_ data: Data) -> [[UInt8]]? {
+        let data = stripMacBinary(data)
         guard data.count >= HEADER_SIZE else { return nil }
 
         // Check version

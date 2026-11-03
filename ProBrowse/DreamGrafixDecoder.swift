@@ -138,7 +138,7 @@ class DreamGrafixDecoder {
     // Layout: 32000 pixels + 256 SCB + 512 palette + 512 optional
 
     private static func render256Color(data: Data, width: Int, height: Int, paletteOverride: [[RGB]]?) -> (image: CGImage?, type: AppleIIImageType) {
-        let bytesPerLine = width / 2  // 2 pixels per byte in 320 mode
+        let bytesPerLine = 160  // 160 bytes per line in both 320 and 640 mode
         let pixelDataSize = bytesPerLine * height
         let scbOffset = pixelDataSize
         let paletteOffset = scbOffset + 256
@@ -172,12 +172,19 @@ class DreamGrafixDecoder {
         }
         palettes = applyOverride(paletteOverride, to: palettes)
 
+        // Any 640-mode line makes the picture 640 wide; 320-mode lines are then doubled
+        func scbFor(_ y: Int) -> UInt8 {
+            return y < 256 && scbOffset + y < data.count ? data[scbOffset + y] : 0
+        }
+        let has640 = (0..<height).contains { scbFor($0) & 0x80 != 0 }
+        let outWidth = has640 ? 640 : min(width, 320)
+        let scale320 = has640 ? 2 : 1
+
         // Render image
-        var rgbaBuffer = [UInt8](repeating: 0, count: width * height * 4)
+        var rgbaBuffer = [UInt8](repeating: 0, count: outWidth * height * 4)
 
         for y in 0..<height {
-            // Get SCB for this line
-            let scb = y < 256 && scbOffset + y < data.count ? data[scbOffset + y] : 0
+            let scb = scbFor(y)
             let paletteIndex = Int(scb & 0x0F)
             let is640Mode = (scb & 0x80) != 0
             let palette = paletteIndex < palettes.count ? palettes[paletteIndex] : palettes[0]
@@ -188,17 +195,15 @@ class DreamGrafixDecoder {
                 let byte = data[dataIndex]
 
                 if is640Mode {
-                    // 640 mode: 4 pixels per byte
+                    // 640 mode: four 2-bit pixels per byte (bits 7-6 first), each using
+                    // its own quarter of the palette (colors 8-11, 12-15, 0-3, 4-7)
                     for pixelInByte in 0..<4 {
                         let x = xByte * 4 + pixelInByte
-                        if x >= width { break }
+                        if x >= outWidth { break }
 
-                        let highBit = (byte >> (7 - pixelInByte)) & 1
-                        let lowBit = (byte >> (3 - pixelInByte)) & 1
-                        let colorIndex = Int((highBit << 1) | lowBit)
-
+                        let colorIndex = [8, 12, 0, 4][pixelInByte] + Int((byte >> (6 - pixelInByte * 2)) & 0x03)
                         let color = colorIndex < palette.count ? palette[colorIndex] : (0, 0, 0)
-                        let bufIdx = (y * width + x) * 4
+                        let bufIdx = (y * outWidth + x) * 4
 
                         rgbaBuffer[bufIdx] = color.0
                         rgbaBuffer[bufIdx + 1] = color.1
@@ -207,34 +212,23 @@ class DreamGrafixDecoder {
                     }
                 } else {
                     // 320 mode: 2 pixels per byte
-                    let x = xByte * 2
-
-                    let colorIndex1 = Int((byte >> 4) & 0x0F)
-                    let color1 = colorIndex1 < palette.count ? palette[colorIndex1] : (0, 0, 0)
-
-                    if x < width {
-                        let bufIdx1 = (y * width + x) * 4
-                        rgbaBuffer[bufIdx1] = color1.0
-                        rgbaBuffer[bufIdx1 + 1] = color1.1
-                        rgbaBuffer[bufIdx1 + 2] = color1.2
-                        rgbaBuffer[bufIdx1 + 3] = 255
-                    }
-
-                    let colorIndex2 = Int(byte & 0x0F)
-                    let color2 = colorIndex2 < palette.count ? palette[colorIndex2] : (0, 0, 0)
-
-                    if x + 1 < width {
-                        let bufIdx2 = (y * width + x + 1) * 4
-                        rgbaBuffer[bufIdx2] = color2.0
-                        rgbaBuffer[bufIdx2 + 1] = color2.1
-                        rgbaBuffer[bufIdx2 + 2] = color2.2
-                        rgbaBuffer[bufIdx2 + 3] = 255
+                    for (n, colorIndex) in [Int((byte >> 4) & 0x0F), Int(byte & 0x0F)].enumerated() {
+                        let color = colorIndex < palette.count ? palette[colorIndex] : (0, 0, 0)
+                        for s in 0..<scale320 {
+                            let x = (xByte * 2 + n) * scale320 + s
+                            if x >= outWidth { break }
+                            let bufIdx = (y * outWidth + x) * 4
+                            rgbaBuffer[bufIdx] = color.0
+                            rgbaBuffer[bufIdx + 1] = color.1
+                            rgbaBuffer[bufIdx + 2] = color.2
+                            rgbaBuffer[bufIdx + 3] = 255
+                        }
                     }
                 }
             }
         }
 
-        guard let image = ImageHelpers.createCGImage(from: rgbaBuffer, width: width, height: height) else {
+        guard let image = ImageHelpers.createCGImage(from: rgbaBuffer, width: outWidth, height: height) else {
             return (nil, .Unknown)
         }
 
@@ -245,7 +239,7 @@ class DreamGrafixDecoder {
     // Layout: 32000 pixels + 6400 per-line palettes (200 lines × 16 colors × 2 bytes)
 
     private static func render3200Color(data: Data, width: Int, height: Int, paletteOverride: [[RGB]]?) -> (image: CGImage?, type: AppleIIImageType) {
-        let bytesPerLine = width / 2
+        let bytesPerLine = 160
         let pixelDataSize = bytesPerLine * height
         let paletteOffset = pixelDataSize
 
@@ -322,7 +316,7 @@ class DreamGrafixDecoder {
     // MARK: - Default Palette Rendering
 
     private static func renderWithDefaultPalette(data: Data, width: Int, height: Int) -> (image: CGImage?, type: AppleIIImageType) {
-        let bytesPerLine = width / 2
+        let bytesPerLine = 160
 
         let defaultPalette: [(r: UInt8, g: UInt8, b: UInt8)] = [
             (0,0,0), (221,0,51), (0,0,153), (221,34,153),
