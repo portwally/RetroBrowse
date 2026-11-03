@@ -100,7 +100,7 @@ class DiskPaneViewModel: ObservableObject {
     // MARK: - Load Disk Image
     
     /// File extensions that open as a disk image or archive rather than being imported as a file
-    static let openableExtensions = ["po", "2mg", "hdv", "dsk", "do", "vol",
+    static let openableExtensions = ["po", "2mg", "hdv", "img", "dsk", "do", "vol",
                                      "shk", "sdk", "bxy", "bny", "bqy", "bii", "gz", "zip"]
     
     func loadDiskImage(from url: URL) {
@@ -295,6 +295,14 @@ class DiskPaneViewModel: ObservableObject {
                         }
                     }
                 }
+            }
+
+            // DiskCopy 4.2 (.img / .image): strip the 84-byte header. Changing the disk would
+            // break DiskCopy's checksum, so these open read-only.
+            if let userData = DiskImageParser.diskCopy42UserData(originalData) {
+                print("📀 Detected DiskCopy 4.2 image: \(url.lastPathComponent)")
+                originalData = userData
+                extractedFromArchive = true
             }
 
             // For .vol files - try UCSD Pascal first

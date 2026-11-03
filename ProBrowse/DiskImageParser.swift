@@ -211,6 +211,20 @@ class DiskImageParser {
     // MARK: - Block Reader Helper
     
     /// Validates if a block is a valid ProDOS Volume Directory Header
+    /// The disk blocks of a DiskCopy 4.2 image, or nil if `data` isn't one.
+    /// Layout (big-endian): name at +$00, data size +$40, tag size +$44, checksums,
+    /// format bytes at +$50, $0100 at +$52, blocks from +$54. (CiderPress II DiskCopy-notes.md)
+    static func diskCopy42UserData(_ data: Data) -> Data? {
+        guard data.count > 0x54 else { return nil }
+        let b = data.startIndex
+        func be32(_ o: Int) -> Int { Int(data[b + o]) << 24 | Int(data[b + o + 1]) << 16 | Int(data[b + o + 2]) << 8 | Int(data[b + o + 3]) }
+        let dataSize = be32(0x40), tagSize = be32(0x44)
+        guard data[b + 0x52] == 0x01, data[b + 0x53] == 0x00, data[b] <= 63,
+              dataSize > 0, dataSize % 512 == 0, tagSize % 12 == 0,
+              0x54 + dataSize + tagSize == data.count else { return nil }
+        return data.subdata(in: b + 0x54..<b + 0x54 + dataSize)
+    }
+
     static func isValidProDOSVolumeHeader(_ block: Data) -> Bool {
         guard block.count >= 512 else { return false }
         

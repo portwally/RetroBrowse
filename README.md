@@ -42,6 +42,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 | DOS Order | `.do` | ✅ | ✅ |
 | Universal 2IMG | `.2mg` | ✅ | ✅ |
 | Hard Disk Volume | `.hdv` | ✅ | ✅ |
+| Raw image / DiskCopy 4.2 | `.img` | ✅ | ✅ (DiskCopy 4.2: read only) |
 | Generic DSK | `.dsk` | ✅ | ✅ |
 | UCSD Pascal Volume | `.vol` | ✅ | ❌ |
 
