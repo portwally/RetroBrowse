@@ -22,7 +22,7 @@ struct AppleIIgsFont {
     let rowWords: Int      // Words per row in the strike bitmap
     let strikeData: Data   // Raw bitmap data
     let locationTable: [Int]  // Pixel offsets for each character
-    let widthTable: [Int]     // Width of each character
+    let widthTable: [Int]     // Width of each character (-1 = missing)
 
     var characterCount: Int {
         return lastChar - firstChar + 1
@@ -36,6 +36,11 @@ class AppleIIgsFontDecoder {
     /// Decode an Apple IIgs font file - tries multiple header formats
     static func decode(data: Data) -> AppleIIgsFont? {
         guard data.count >= 30 else { return nil }
+
+        // Standard $C8/$0000 layout: read the header directly
+        if let font = tryDecodeFontFile(data: data) {
+            return font
+        }
 
         // Try different starting offsets for the font record
         // Apple IIgs fonts can have various headers before the actual font data:
@@ -66,6 +71,21 @@ class AppleIIgsFontDecoder {
         }
 
         return nil
+    }
+
+    /// Decode using the IIgs font file layout (File Type Note $C8/$0000):
+    /// Pascal family name, then the IIgs header whose first word (offsetToMF)
+    /// is the offset in words from the header start to the Mac font record.
+    private static func tryDecodeFontFile(data: Data) -> AppleIIgsFont? {
+        let headerStart = 1 + Int(data[0])
+        // Fixed IIgs header part is 12 bytes
+        guard headerStart + 12 <= data.count else { return nil }
+
+        let offsetToMF = Int(readWord(data, at: headerStart))
+        // Must cover the fixed header; larger values are not expected
+        guard offsetToMF >= 6 && offsetToMF <= 256 else { return nil }
+
+        return tryDecode(data: data, startOffset: headerStart + offsetToMF * 2)
     }
 
     /// Try to decode font that has a Pascal string name header
@@ -251,9 +271,14 @@ class AppleIIgsFontDecoder {
         for _ in 0..<numChars {
             guard offset + 2 <= data.count else { break }
             let entry = readWord(data, at: offset)
-            // Low byte is width, high byte is offset adjustment
-            let width = Int(entry & 0xFF)
-            widthTable.append(width > 0 ? width : widMax)
+            if entry == 0xFFFF {
+                // Character not in font; -1 marks it missing
+                widthTable.append(-1)
+            } else {
+                // Low byte is width, high byte is offset adjustment
+                let width = Int(entry & 0xFF)
+                widthTable.append(width > 0 ? width : widMax)
+            }
             offset += 2
         }
 
@@ -368,17 +393,31 @@ class AppleIIgsFontDecoder {
         return ImageHelpers.createCGImage(from: pixels, width: charWidth, height: height)
     }
 
+    /// Table index to draw for a character code. Characters outside the
+    /// font or marked missing ($FFFF) use the missing-symbol glyph at
+    /// lastChar+1. Returns nil if that glyph is missing too.
+    private static func glyphIndex(font: AppleIIgsFont, charCode: Int) -> Int? {
+        let charIndex = charCode - font.firstChar
+        if charIndex >= 0 && charIndex <= font.lastChar - font.firstChar &&
+            charIndex < font.widthTable.count && font.widthTable[charIndex] >= 0 {
+            return charIndex
+        }
+        let missingIndex = font.lastChar - font.firstChar + 1
+        if missingIndex >= 0 && missingIndex < font.widthTable.count &&
+            font.widthTable[missingIndex] >= 0 {
+            return missingIndex
+        }
+        return nil
+    }
+
     /// Render text string using the font
     static func renderText(font: AppleIIgsFont, text: String, scale: Int = 1) -> CGImage? {
         // Calculate total width
         var totalWidth = 0
         for char in text {
             let charCode = Int(char.asciiValue ?? 0)
-            let charIndex = charCode - font.firstChar
-            if charIndex >= 0 && charIndex < font.widthTable.count {
-                totalWidth += font.widthTable[charIndex]
-            } else {
-                totalWidth += font.maxWidth
+            if let index = glyphIndex(font: font, charCode: charCode) {
+                totalWidth += font.widthTable[index]
             }
         }
 
@@ -398,9 +437,12 @@ class AppleIIgsFontDecoder {
 
         for char in text {
             let charCode = Int(char.asciiValue ?? 0)
-            let charIndex = charCode - font.firstChar
+            guard let charIndex = glyphIndex(font: font, charCode: charCode) else {
+                // No glyph and no missing symbol - draw nothing
+                continue
+            }
 
-            if charIndex >= 0 && charIndex < font.locationTable.count - 1 {
+            if charIndex < font.locationTable.count - 1 {
                 let startX = font.locationTable[charIndex]
                 let endX = font.locationTable[charIndex + 1]
                 // A malformed location table can run backwards
@@ -428,12 +470,9 @@ class AppleIIgsFontDecoder {
                         }
                     }
                 }
-
-                currentX += charIndex < font.widthTable.count ? font.widthTable[charIndex] : charWidth
-            } else {
-                // Unknown character - advance by max width
-                currentX += font.maxWidth
             }
+
+            currentX += font.widthTable[charIndex]
         }
 
         return ImageHelpers.createCGImage(from: pixels, width: totalWidth, height: height)

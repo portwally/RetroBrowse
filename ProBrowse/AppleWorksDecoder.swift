@@ -189,6 +189,8 @@ class AppleWorksDecoder {
 
     private static let ASP_HEADER_SIZE = 300
     private static let ASP_MIN_VERS_OFFSET = 242
+    private static let ASP_MAX_ROWS = 999
+    private static let ASP_MAX_COLS = 127
 
     // MARK: - Public Interface
 
@@ -800,32 +802,32 @@ class AppleWorksDecoder {
         return (line, plainText)
     }
 
+    // Mac OS Roman high characters mapping to Unicode (built once)
+    private static let macRomanToUnicode: [UInt8: String] = [
+        0x80: "Ä", 0x81: "Å", 0x82: "Ç", 0x83: "É", 0x84: "Ñ", 0x85: "Ö", 0x86: "Ü", 0x87: "á",
+        0x88: "à", 0x89: "â", 0x8A: "ä", 0x8B: "ã", 0x8C: "å", 0x8D: "ç", 0x8E: "é", 0x8F: "è",
+        0x90: "ê", 0x91: "ë", 0x92: "í", 0x93: "ì", 0x94: "î", 0x95: "ï", 0x96: "ñ", 0x97: "ó",
+        0x98: "ò", 0x99: "ô", 0x9A: "ö", 0x9B: "õ", 0x9C: "ú", 0x9D: "ù", 0x9E: "û", 0x9F: "ü",
+        0xA0: "†", 0xA1: "°", 0xA2: "¢", 0xA3: "£", 0xA4: "§", 0xA5: "•", 0xA6: "¶", 0xA7: "ß",
+        0xA8: "®", 0xA9: "©", 0xAA: "™", 0xAB: "´", 0xAC: "¨", 0xAD: "≠", 0xAE: "Æ", 0xAF: "Ø",
+        0xB0: "∞", 0xB1: "±", 0xB2: "≤", 0xB3: "≥", 0xB4: "¥", 0xB5: "µ", 0xB6: "∂", 0xB7: "∑",
+        0xB8: "∏", 0xB9: "π", 0xBA: "∫", 0xBB: "ª", 0xBC: "º", 0xBD: "Ω", 0xBE: "æ", 0xBF: "ø",
+        0xC0: "¿", 0xC1: "¡", 0xC2: "¬", 0xC3: "√", 0xC4: "ƒ", 0xC5: "≈", 0xC6: "∆", 0xC7: "«",
+        0xC8: "»", 0xC9: "…", 0xCA: " ", 0xCB: "À", 0xCC: "Ã", 0xCD: "Õ", 0xCE: "Œ", 0xCF: "œ",
+        0xD0: "–", 0xD1: "—", 0xD2: "\u{201C}", 0xD3: "\u{201D}", 0xD4: "\u{2018}", 0xD5: "\u{2019}", 0xD6: "÷", 0xD7: "◊",
+        0xD8: "ÿ", 0xD9: "Ÿ", 0xDA: "⁄", 0xDB: "€", 0xDC: "‹", 0xDD: "›", 0xDE: "ﬁ", 0xDF: "ﬂ",
+        0xE0: "‡", 0xE1: "·", 0xE2: "‚", 0xE3: "„", 0xE4: "‰", 0xE5: "Â", 0xE6: "Ê", 0xE7: "Á",
+        0xE8: "Ë", 0xE9: "È", 0xEA: "Í", 0xEB: "Î", 0xEC: "Ï", 0xED: "Ì", 0xEE: "Ó", 0xEF: "Ô",
+        0xF0: "\u{F8FF}", 0xF1: "Ò", 0xF2: "Ú", 0xF3: "Û", 0xF4: "Ù", 0xF5: "ı", 0xF6: "ˆ", 0xF7: "˜",
+        0xF8: "¯", 0xF9: "˘", 0xFA: "˙", 0xFB: "˚", 0xFC: "¸", 0xFD: "˝", 0xFE: "˛", 0xFF: "ˇ"
+    ]
+
     /// Convert Mac OS Roman character to Unicode
     private static func convertMacRomanChar(_ byte: UInt8) -> String {
         // Standard ASCII range
         if byte >= 0x20 && byte < 0x80 {
             return String(UnicodeScalar(byte))
         }
-
-        // Mac OS Roman high characters mapping to Unicode
-        let macRomanToUnicode: [UInt8: String] = [
-            0x80: "Ä", 0x81: "Å", 0x82: "Ç", 0x83: "É", 0x84: "Ñ", 0x85: "Ö", 0x86: "Ü", 0x87: "á",
-            0x88: "à", 0x89: "â", 0x8A: "ä", 0x8B: "ã", 0x8C: "å", 0x8D: "ç", 0x8E: "é", 0x8F: "è",
-            0x90: "ê", 0x91: "ë", 0x92: "í", 0x93: "ì", 0x94: "î", 0x95: "ï", 0x96: "ñ", 0x97: "ó",
-            0x98: "ò", 0x99: "ô", 0x9A: "ö", 0x9B: "õ", 0x9C: "ú", 0x9D: "ù", 0x9E: "û", 0x9F: "ü",
-            0xA0: "†", 0xA1: "°", 0xA2: "¢", 0xA3: "£", 0xA4: "§", 0xA5: "•", 0xA6: "¶", 0xA7: "ß",
-            0xA8: "®", 0xA9: "©", 0xAA: "™", 0xAB: "´", 0xAC: "¨", 0xAD: "≠", 0xAE: "Æ", 0xAF: "Ø",
-            0xB0: "∞", 0xB1: "±", 0xB2: "≤", 0xB3: "≥", 0xB4: "¥", 0xB5: "µ", 0xB6: "∂", 0xB7: "∑",
-            0xB8: "∏", 0xB9: "π", 0xBA: "∫", 0xBB: "ª", 0xBC: "º", 0xBD: "Ω", 0xBE: "æ", 0xBF: "ø",
-            0xC0: "¿", 0xC1: "¡", 0xC2: "¬", 0xC3: "√", 0xC4: "ƒ", 0xC5: "≈", 0xC6: "∆", 0xC7: "«",
-            0xC8: "»", 0xC9: "…", 0xCA: " ", 0xCB: "À", 0xCC: "Ã", 0xCD: "Õ", 0xCE: "Œ", 0xCF: "œ",
-            0xD0: "–", 0xD1: "—", 0xD2: "\u{201C}", 0xD3: "\u{201D}", 0xD4: "\u{2018}", 0xD5: "\u{2019}", 0xD6: "÷", 0xD7: "◊",
-            0xD8: "ÿ", 0xD9: "Ÿ", 0xDA: "⁄", 0xDB: "€", 0xDC: "‹", 0xDD: "›", 0xDE: "ﬁ", 0xDF: "ﬂ",
-            0xE0: "‡", 0xE1: "·", 0xE2: "‚", 0xE3: "„", 0xE4: "‰", 0xE5: "Â", 0xE6: "Ê", 0xE7: "Á",
-            0xE8: "Ë", 0xE9: "È", 0xEA: "Í", 0xEB: "Î", 0xEC: "Ï", 0xED: "Ì", 0xEE: "Ó", 0xEF: "Ô",
-            0xF0: "", 0xF1: "Ò", 0xF2: "Ú", 0xF3: "Û", 0xF4: "Ù", 0xF5: "ı", 0xF6: "ˆ", 0xF7: "˜",
-            0xF8: "¯", 0xF9: "˘", 0xFA: "˙", 0xFB: "˚", 0xFC: "¸", 0xFD: "˝", 0xFE: "˛", 0xFF: "ˇ"
-        ]
 
         return macRomanToUnicode[byte] ?? "?"
     }
@@ -1055,13 +1057,20 @@ class AppleWorksDecoder {
 
             guard offset + rowLen - 2 <= data.count else { break }
 
+            // Parse cells in this row
+            let rowEndOffset = offset + rowLen - 2  // -2 because rowLen includes the 2-byte row number
+
+            // AppleWorks allows at most 999 rows; skip anything beyond that
+            if rowNum > ASP_MAX_ROWS {
+                offset = max(offset, rowEndOffset)
+                continue
+            }
+
             // Ensure we have enough rows
             while cells.count <= rowNum {
                 cells.append([])
             }
 
-            // Parse cells in this row
-            let rowEndOffset = offset + rowLen - 2  // -2 because rowLen includes the 2-byte row number
             var colIndex = 0
 
             while offset < rowEndOffset {
@@ -1082,6 +1091,9 @@ class AppleWorksDecoder {
 
                     let cellData = data.subdata(in: offset..<(offset + cellLen))
                     offset += cellLen
+
+                    // AppleWorks allows at most 127 columns; ignore cells past that
+                    if colIndex >= ASP_MAX_COLS { continue }
 
                     // Ensure we have enough columns
                     while cells[rowNum].count <= colIndex {

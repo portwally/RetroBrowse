@@ -194,11 +194,10 @@ class ApplesoftDetokenizer {
                     // Inside REM: everything is literal until end of line
                     let printable = byte & 0x7F
                     if printable >= 0x20 && printable < 0x7F {
-                        result += String(UnicodeScalar(printable))
-                    } else if byte >= 0x80 {
-                        // High-ASCII character
+                        // Covers high-ASCII printable characters too
                         result += String(UnicodeScalar(printable))
                     } else {
+                        // Control character (with or without bit 7)
                         result += "."
                     }
                 } else if inDATA {
