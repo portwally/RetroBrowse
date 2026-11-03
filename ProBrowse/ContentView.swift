@@ -261,7 +261,7 @@ struct ToolbarView: View {
                 if leftSelectionCount > 0 {
                     Text("\(leftSelectionCount)")
                         .font(.caption)
-                        .foregroundColor(skin.isNorton ? skin.toolbarForeground : .secondary)
+                        .foregroundColor(skin.isRetro ? skin.toolbarForeground : .secondary)
                         .padding(.leading, 4)
                 }
             }
@@ -284,7 +284,7 @@ struct ToolbarView: View {
                 if rightSelectionCount > 0 {
                     Text("\(rightSelectionCount)")
                         .font(.caption)
-                        .foregroundColor(skin.isNorton ? skin.toolbarForeground : .secondary)
+                        .foregroundColor(skin.isRetro ? skin.toolbarForeground : .secondary)
                         .padding(.trailing, 4)
                 }
 
@@ -353,7 +353,7 @@ struct ToolbarButton: View {
     @Environment(\.skin) private var skin
 
     private var color: Color {
-        if skin.isNorton {
+        if skin.isRetro {
             return disabled ? skin.toolbarForeground.opacity(0.35) : (destructive ? Color(red: 0.67, green: 0, blue: 0) : skin.toolbarForeground)
         }
         return disabled ? .secondary : (destructive ? .red : .primary)

@@ -114,7 +114,12 @@ struct OverviewHelpView: View {
                 HelpBullet("**File List** - Displays files with type, size, and dates")
                 HelpBullet("**Back Button** - Navigate up from subdirectories")
                 HelpBullet("**Expand / Collapse All** - The two buttons at the right of the header bar open or close every folder in that pane")
-                HelpBullet("**Skins** - RetroBrowse > Settings: System, Light, Dark or Norton Commander")
+                HelpBullet("**Skins** - RetroBrowse > Settings: System, Light, Dark, Norton Commander or Apple IIGS 640")
+            }
+
+            HelpSection("Skin Fonts") {
+                HelpBullet("**Shaston 640** by Kreative Software (kreativekorp.com), used under the Kreative Software Relay Fonts Free Use License")
+                HelpBullet("**Modern DOS 9x16**, public domain (CC0)")
             }
 
             HelpNote("Always backup your disk images before making changes!")

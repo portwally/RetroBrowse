@@ -323,7 +323,7 @@ struct DiskBrowserPane: View {
                 .foregroundColor(skin.secondaryText)
             
             Text("No Disk Image Loaded")
-                .font(skin.isNorton ? skin.font(15) : .title3)
+                .font(skin.isRetro ? skin.font(15) : .title3)
                 .foregroundColor(skin.secondaryText)
             
             Button("Open Disk Image") {

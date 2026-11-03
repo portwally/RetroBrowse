@@ -2,9 +2,12 @@
 //  Skin.swift
 //  ProBrowse
 //
-//  Window skins: follow the system, light, dark, or Norton Commander.
-//  The Norton Commander skin uses the Modern DOS 9x16 font (CC0, see
-//  Fonts/ModernDOS-LICENSE.txt) and the 16-colour CGA/VGA text-mode palette.
+//  Window skins: follow the system, light, dark, Norton Commander, or the Apple IIGS
+//  Finder in 640 mode.
+//  - Norton Commander: Modern DOS 9x16 font (CC0, Fonts/ModernDOS-LICENSE.txt) and the
+//    16-colour CGA/VGA text-mode palette.
+//  - Apple IIGS 640: Shaston 640 font by Kreative Software (Relay Fonts Free Use License,
+//    Fonts/Shaston-LICENSE.txt), black on white with the yellow GS/OS Finder highlight.
 //
 
 import SwiftUI
@@ -12,7 +15,7 @@ import AppKit
 import CoreText
 
 enum Skin: String, CaseIterable, Identifiable {
-    case system, light, dark, norton
+    case system, light, dark, norton, iigs
 
     static let storageKey = "skin"
 
@@ -24,19 +27,22 @@ enum Skin: String, CaseIterable, Identifiable {
         case .light: return "Light"
         case .dark: return "Dark"
         case .norton: return "Norton Commander"
+        case .iigs: return "Apple IIGS 640"
         }
     }
 
-    /// Appearance for the whole app; Norton Commander pairs its blue panes with dark sheets and menus
+    /// Appearance for the whole app, so sheets and menus suit the skin
     var appearance: NSAppearance? {
         switch self {
         case .system: return nil
-        case .light: return NSAppearance(named: .aqua)
+        case .light, .iigs: return NSAppearance(named: .aqua)
         case .dark, .norton: return NSAppearance(named: .darkAqua)
         }
     }
 
     var isNorton: Bool { self == .norton }
+    /// Skins with their own font and colours; System, Light and Dark use the macOS look
+    var isRetro: Bool { self == .norton || self == .iigs }
 
     // MARK: Colours
 
@@ -45,35 +51,104 @@ enum Skin: String, CaseIterable, Identifiable {
     private static let dosCyan = Color(red: 0, green: 0xAA / 255, blue: 0xAA / 255)
     private static let dosLightCyan = Color(red: 0x55 / 255, green: 1, blue: 1)
     private static let dosYellow = Color(red: 1, green: 1, blue: 0x55 / 255)
+    // GS/OS Finder desktop blue and the yellow of its selection highlight
+    private static let gsBlue = Color(red: 0x55 / 255, green: 0x99 / 255, blue: 1)
+    private static let gsYellow = Color(red: 1, green: 1, blue: 0)
 
     /// Background of the file lists
-    var paneBackground: Color { isNorton ? Skin.dosBlue : .clear }
+    var paneBackground: Color {
+        switch self {
+        case .norton: return Skin.dosBlue
+        case .iigs: return .white
+        default: return .clear
+        }
+    }
     /// Background of the volume line and column headers
-    var headerBackground: Color { isNorton ? Skin.dosBlue : Color(NSColor.controlBackgroundColor) }
-    var toolbarBackground: Color { isNorton ? Skin.dosCyan : Color(NSColor.controlBackgroundColor) }
-    var toolbarForeground: Color { isNorton ? .black : .primary }
+    var headerBackground: Color {
+        switch self {
+        case .norton: return Skin.dosBlue
+        case .iigs: return .white
+        default: return Color(NSColor.controlBackgroundColor)
+        }
+    }
+    var toolbarBackground: Color {
+        switch self {
+        case .norton: return Skin.dosCyan
+        case .iigs: return Skin.gsBlue
+        default: return Color(NSColor.controlBackgroundColor)
+        }
+    }
+    var toolbarForeground: Color { isRetro ? .black : .primary }
 
-    var fileText: Color { isNorton ? Skin.dosLightCyan : .primary }
-    var folderText: Color { isNorton ? .white : .primary }
-    var secondaryText: Color { isNorton ? Skin.dosLightCyan : .secondary }
-    var columnHeaderText: Color { isNorton ? Skin.dosYellow : .secondary }
-    var selectionBackground: Color { isNorton ? Skin.dosCyan : Color.accentColor.opacity(0.3) }
-    var selectionText: Color { isNorton ? .black : .primary }
-    var lines: Color { isNorton ? Skin.dosLightCyan.opacity(0.7) : Color.secondary.opacity(0.3) }
+    var fileText: Color {
+        switch self {
+        case .norton: return Skin.dosLightCyan
+        case .iigs: return .black
+        default: return .primary
+        }
+    }
+    var folderText: Color {
+        switch self {
+        case .norton: return .white
+        case .iigs: return .black
+        default: return .primary
+        }
+    }
+    var secondaryText: Color {
+        switch self {
+        case .norton: return Skin.dosLightCyan
+        case .iigs: return .black
+        default: return .secondary
+        }
+    }
+    var columnHeaderText: Color {
+        switch self {
+        case .norton: return Skin.dosYellow
+        case .iigs: return .black
+        default: return .secondary
+        }
+    }
+    var selectionBackground: Color {
+        switch self {
+        case .norton: return Skin.dosCyan
+        case .iigs: return Skin.gsYellow
+        default: return Color.accentColor.opacity(0.3)
+        }
+    }
+    var selectionText: Color {
+        switch self {
+        case .norton, .iigs: return .black
+        default: return .primary
+        }
+    }
+    var lines: Color {
+        switch self {
+        case .norton: return Skin.dosLightCyan.opacity(0.7)
+        case .iigs: return .black
+        default: return Color.secondary.opacity(0.3)
+        }
+    }
 
     // MARK: Fonts
 
     static let dosFontName = "ModernDOS9x16"
+    static let shastonFontName = "Shaston640"
 
-    /// The DOS font in Norton Commander, otherwise the system font at `size`
+    /// The skin's own font, otherwise the system font at `size`
     func font(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        isNorton ? .custom(Skin.dosFontName, fixedSize: 16) : .system(size: size, weight: weight)
+        switch self {
+        case .norton: return .custom(Skin.dosFontName, fixedSize: 16)
+        case .iigs: return .custom(Skin.shastonFontName, fixedSize: 16)
+        default: return .system(size: size, weight: weight)
+        }
     }
 
-    /// Registers the bundled DOS font for this process
+    /// Registers the bundled fonts for this process
     static func registerFonts() {
-        guard let url = Bundle.main.url(forResource: "ModernDOS9x16", withExtension: "ttf") else { return }
-        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        for name in [dosFontName, shastonFontName] {
+            guard let url = Bundle.main.url(forResource: name, withExtension: "ttf") else { continue }
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
     }
 }
 

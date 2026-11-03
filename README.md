@@ -13,7 +13,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 ### Features
 
 - **Dual-Pane Browser** - Work with two disk images simultaneously
-- **File Inspector** - View file contents with Cmd+I or context menu
+- **File Inspector** - View file contents with Space, Cmd+I or the context menu; Space again closes it, like Quick Look
 - **Native ProDOS Support** - Read and write ProDOS disk images natively in Swift
 - **DOS 3.3 Support** - Full read and write support for DOS 3.3 disk images
 - **UCSD Pascal Support** - Read UCSD Pascal volumes (read-only)
@@ -30,9 +30,24 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 - **Disassembler** - 6502 and 65816 machine code disassembly
 - **AppleWorks Viewer** - Classic and GS word processor, database, and spreadsheet
 - **Teach Viewer** - Apple IIgs Teach documents with fonts, styles, and colors
+- **Sound & Music Player** - SoundSmith, NinjaTracker Plus, ProTracker MOD, rSound, HyperStudio, ASIF, AIFF and MIDI play as soon as they are opened
+- **Expand / Collapse All** - Open or close every folder in a pane at once
+- **Skins** - System, Light, Dark, Norton Commander or Apple IIGS 640 (RetroBrowse > Settings)
 - **Date/Time Support** - Displays creation and modification dates from ProDOS
 - **Modern UI** - Clean SwiftUI interface with resizable columns
 - **Export Capability** - Extract files to your Mac  
+
+### Skins
+
+**Norton Commander** — blue panes, cyan files, white folders and the Modern DOS 9x16 font.
+
+![RetroBrowse with the Norton Commander skin](docs/screenshots/skin-norton-commander.png)
+
+**Apple IIGS 640** — the GS/OS Finder look: Shaston 640, black on white and the yellow highlight.
+
+![RetroBrowse with the Apple IIGS 640 skin](docs/screenshots/skin-apple-iigs-640.png)
+
+Fonts: Shaston 640 by [Kreative Software](https://www.kreativekorp.com/software/fonts/apple2/) (Relay Fonts Free Use License); Modern DOS 9x16 is public domain (CC0).
 
 ### Supported Disk Image Formats
 

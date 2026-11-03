@@ -133,7 +133,7 @@ struct CatalogEntryRowContent: View {
 
     /// Text colour for this row in the current skin
     private var textColor: Color {
-        if isSelected && skin.isNorton { return skin.selectionText }
+        if isSelected && skin.isRetro { return skin.selectionText }
         return entry.isDirectory ? skin.folderText : skin.fileText
     }
     
@@ -160,7 +160,7 @@ struct CatalogEntryRowContent: View {
                             Button(action: { isExpanded.toggle() }) {
                                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                                     .font(.system(size: 10))
-                                    .foregroundColor(skin.isNorton ? textColor : .secondary)
+                                    .foregroundColor(skin.isRetro ? textColor : .secondary)
                                     .frame(width: 16, height: 16)
                                     .contentShape(Rectangle())
                             }
@@ -173,71 +173,73 @@ struct CatalogEntryRowContent: View {
                             .font(.body)
                         
                         Text(entry.isLocked ? entry.name + " 🔒" : entry.name)
-                            .font(skin.isNorton ? skin.font(13) : .body)
+                            .font(skin.isRetro ? skin.font(13) : .body)
                             .lineLimit(1)
-                            .fontWeight(entry.isDirectory && !skin.isNorton ? .semibold : .regular)
+                            .fontWeight(entry.isDirectory && !skin.isRetro ? .semibold : .regular)
                         
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.nameWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
+                    Divider().frame(width: 1).opacity(skin.isRetro ? 0 : 0.3).background(skin.isRetro ? skin.lines : .clear)
                     
                     // Type Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.fileTypeString)
-                            .font(skin.isNorton ? skin.font(11) : .caption)
+                            .font(skin.isRetro ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.typeWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
+                    Divider().frame(width: 1).opacity(skin.isRetro ? 0 : 0.3).background(skin.isRetro ? skin.lines : .clear)
                     
                     // Aux Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(String(format: "$%04X", entry.auxType))
-                            .font(skin.isNorton ? skin.font(11) : .caption)
+                            .font(skin.isRetro ? skin.font(11) : .caption)
                             .monospacedDigit()
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.auxWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
+                    Divider().frame(width: 1).opacity(skin.isRetro ? 0 : 0.3).background(skin.isRetro ? skin.lines : .clear)
                     
                     // Size Column (in bytes)
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         Text("\(entry.size)")
-                            .font(skin.isNorton ? skin.font(11) : .caption)
+                            .font(skin.isRetro ? skin.font(11) : .caption)
                             .monospacedDigit()
                         Spacer().frame(width: 8)
                     }
                     .frame(width: columnWidths.sizeWidth, alignment: .trailing)
                     
-                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
+                    Divider().frame(width: 1).opacity(skin.isRetro ? 0 : 0.3).background(skin.isRetro ? skin.lines : .clear)
                     
                     // Modified Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.modificationDate ?? "—")
-                            .font(skin.isNorton ? skin.font(11) : .caption)
+                            .font(skin.isRetro ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.modifiedWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
+                    Divider().frame(width: 1).opacity(skin.isRetro ? 0 : 0.3).background(skin.isRetro ? skin.lines : .clear)
                     
                     // Created Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.creationDate ?? "—")
-                            .font(skin.isNorton ? skin.font(11) : .caption)
+                            .font(skin.isRetro ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // Retro skins colour the whole row; the macOS skins keep the system text colour
+                .foregroundColor(skin.isRetro ? textColor : nil)
             }
         }
         .frame(height: 22)

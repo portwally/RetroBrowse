@@ -341,3 +341,6 @@ this has been built or run yet.
 - [x] Verify each skin in the running app; tests still pass
   - Checked in the running app: Settings menu, all skins, Expand/Collapse All, autoplay, Stop, Space to close.
   - Norton Commander: dates need wider columns than the default; the columns can be dragged wider.
+- [x] Apple IIGS 640 skin: Shaston 640 (Kreative Software, Relay Fonts Free Use License, credited in Help),
+      white windows, black text and lines, yellow GS/OS highlight, IIgs desktop blue toolbar
+- [x] Fix: retro skins now colour whole rows (Norton Commander files were white instead of cyan)
