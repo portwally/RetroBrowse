@@ -57,9 +57,11 @@ Fonts: Shaston 640 by [Kreative Software](https://www.kreativekorp.com/software/
 | DOS Order | `.do` | ✅ | ✅ |
 | Universal 2IMG | `.2mg` | ✅ | ✅ |
 | Hard Disk Volume | `.hdv` | ✅ | ✅ |
-| Raw image / DiskCopy 4.2 | `.img` | ✅ | ✅ (DiskCopy 4.2: read only) |
+| Raw image / DiskCopy 4.2 | `.img` | ✅ | ✅* |
 | Generic DSK | `.dsk` | ✅ | ✅ |
 | UCSD Pascal Volume | `.vol` | ✅ | ❌ |
+
+\* Only plain `.img` images are writable; DiskCopy 4.2 images open read-only.
 
 ### Supported Archive Formats
 
