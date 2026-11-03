@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "probrowse-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4787", "--directory", "/Users/wally/Documents/Github homepage/portwally.github.io/Probrowse"],
+      "port": 4787
+    },
+    {
+      "name": "portfolio-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4788", "--directory", "/Users/wally/Documents/Github homepage/portwally.github.io"],
+      "port": 4788
+    }
+  ]
+}
