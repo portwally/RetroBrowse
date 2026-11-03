@@ -1,4 +1,90 @@
-# ProBrowse audit — findings and fix plan
+# RetroBrowse audit — 2026-11-03
+
+Audit of the code at `b72245e`. Read-only: no source was changed. Every item from the
+2026-10-12 audit below was re-checked and is still fixed (the `0xE10000` duplicate key is
+gone; no dictionary literal in the project has a duplicate key).
+
+Method: four parallel reviews (disk formats and writers; archives and disassemblers; file
+decoders; UI, view model and docs), each finding re-read against the code. No Swift
+toolchain was available, so nothing was built or run: every item is **[read]**, items
+marked **[likely]** depend on a format detail that could not be checked.
+
+Paths are relative to `ProBrowse/`. "VM" is `DiskPaneViewModel.swift`.
+
+## 1. Data loss
+
+- [ ] **Copy, cut and export drop resource forks** — VM `1016-1036`, `817`; `ProDOSWriter.addFile` (`:204`) cannot write storage type 5. The copy reports success, so Cut then deletes the original (VM `1365`). Cutting a Teach document or GS/OS app loses its resource fork for good.
+- [ ] **Writes to one image are not serialized** — every writer reads the whole image on `DispatchQueue.global`, changes it and writes it back (`ProDOSWriter.swift:206`, `779`, `974`, `1194`; `DOS33Writer` the same). Delete during a long paste writes an older copy last, so the pasted files vanish.
+- [ ] **Finder import reads pane state live per file** — VM `907-948`. Opening a folder or another image mid-import sends the remaining files there; ejecting mid-import stops silently with no failure report. `copyEntries` reads `isDOS33` the same way (VM `980`).
+- [ ] **Auto-rename can create a duplicate name** — `ProDOSWriter.swift:249-250`. `prefix(13) + ".10"` is 16 characters, `findEntry` never matches it and `createDirectoryEntry` (`:692-694`) cuts it to 15: the 11th copy becomes `ABCDEFGHIJKLM.1`, same as the 2nd.
+- [ ] **DOS 3.3 in ProDOS order (`.po`) or `.2mg` is misread and still writable** — `DiskImageParser.swift:403`, `DOS33Writer.swift:30`, VM `354-357`. Only VTOC and the first catalog sector line up; files are garbled and a write lands in the wrong sectors. `dosOrdered(fromProDOSOrder:)` exists but is only used for NuFX. Pascal in `.po`/`.2mg` is never tried (VM `305-310`).
+- [ ] **Copying a folder whose name is not a valid ProDOS name loses its contents** — VM `1005` uses the raw name for the children; `createDirectory` stored the cleaned name (`ProDOSWriter.swift:173-176`, `975`). An archive folder `My Games` becomes an empty `MYGAMES`.
+- [ ] **Locked files can be deleted, and moved by Cut** — VM `1070-1090` and the writers ignore `isLocked` (DOS 3.3) and the ProDOS destroy-access bit.
+- [ ] **DOS 3.3 writer reads allocation direction from the wrong VTOC byte** — `DOS33Writer.swift:82` reads `+$27` (max T/S pairs, `$7A`); direction is `+$31`. Allocation always runs backward and `+$30` is never updated.
+- [ ] **New 32 MB images mark nonexistent block 65535 free** — `ProDOSWriter.swift:1462-1468` sets whole bitmap bytes to `$FF`.
+
+## 2. Hangs and runaway memory
+
+- [ ] **DOS 3.3 reader has no cycle detection** — `DiskImageParser.swift:724-819` (catalog, 100 passes), `829-851` (up to 1000 T/S sectors per file). A self-linked catalog and T/S list can make the app allocate ~21 GB.
+- [ ] **AppleWorks spreadsheet rows and columns are unbounded** — `AppleWorksDecoder.swift:1050-1095`, `AppleWorksView.swift:294`, `309-321`. A 310-byte ASP with row `$FFFE`, or a row of `$FE` skip bytes (~8M columns), builds that many views in non-lazy stacks. Real limits are 999 rows, 127 columns.
+
+## 3. Formats that decode wrongly
+
+- [ ] **Squeeze inside ShrinkIt always fails** — `NuFXArchive.swift:744` requires the SQ `76 FF` header, which NuFX threads do not store. [likely]
+- [ ] **Squeezed Binary II files are returned raw** — `BinaryIIArchive.swift:131`; the data-flags byte at +125 is never read, though VM `142` routes `.bqy` here. Also: EOF high byte at +116 and the phantom flag at +124 are ignored (`:96-121`).
+- [ ] **NuFX dates are decoded as ProDOS dates** — `NuFXArchive.swift:86-87`, `192-194`, `429-454`. They are 8-byte records (sec, min, hour, year−1900, day, month, …).
+- [ ] **Raw 32 KB S16 (`$B3`) screens decode as packed garbage** — `AppleIIGraphicsDecoder.swift:202-211`; the PNT fallback accepts almost anything. The `$C0` branch already excludes that size (`:175`).
+- [ ] **SCB fill mode (bit 5) is ignored** — `AppleIIGraphicsDecoder.swift:337-345`, `PackedSHRDecoder.swift:324-391`, `DreamGrafixDecoder.swift:178-234`.
+- [ ] **DreamGrafix 640-mode pixels and palette quarters wrong** — `DreamGrafixDecoder.swift:196-198`.
+- [ ] **UCSD Pascal: 77th file hidden** — `UCSDPascalParser.swift:17`, `297` (`1..<77` reads slots 1–76); `numFiles` is ignored.
+- [ ] **UCSD file kinds passed through as ProDOS types** — `UCSDPascalParser.swift:366-368` (DATA shows as TXT, TEXT copies as `$02`, aux type = first block).
+- [ ] **DOS 3.3 A and B types (`$20`/`$40`) change type on copy back** — `DiskImageParser.swift:134-135`, `:207`.
+- [ ] **DOS 3.3 sparse files read wrong** — parser stops at the first zero T/S pair (`DiskImageParser.swift:837`); the writer treats it as a hole (`DOS33Writer.swift:370`).
+- [ ] **DOS 3.3 names with control/inverse characters cannot be deleted or renamed** — `DiskImageParser.swift:746` vs `DOS33Writer.swift:183`, `736`.
+- [ ] **Font: missing characters (`$FFFF`) get width 255** — `AppleIIgsFontDecoder.swift:253-256`.
+- [ ] **Mac Roman `$F0` maps to an empty string** — `TeachDecoder.swift:395`, `AppleWorksDecoder.swift:826`; in Teach every style run after it shifts one character.
+- [ ] **Icon transparency fringes** — `AppleIIgsIconDecoder.swift:473-485`, `504`: RGB left non-zero with alpha 0 under `premultipliedLast`.
+- [ ] **AppleWorks spreadsheet** — row labels probably off by one (`AppleWorksView.swift:312`) [likely]; cell length checked against `data.count`, not the row end (`AppleWorksDecoder.swift:1081`).
+- [ ] **MacPaint detection too weak** — `MacPaintDecoder.swift:32-65`; unknown PNT/PIC files render as noise. MacBinary-wrapped files are 128 bytes off.
+- [ ] **2IMG size check ignores the data-length field** — `ImageInspectorSheet.swift:157-166`; images with a comment chunk show "Invalid file size".
+
+## 4. Smaller issues
+
+- [ ] Other pane not refreshed when it shows the same image (VM `1358`; delete/rename/new folder/import reload only `self`).
+- [ ] A disk image dropped as data opens from a temp copy; writes never reach the user's file (`DiskBrowserPane.swift:452-457`).
+- [ ] Cut from a read-only pane copies, then reports a failure; should refuse up front (VM `1298-1311`).
+- [ ] Copy can only be pasted once: `clearClipboard()` runs after Copy too (VM `1356`).
+- [ ] Space opens the inspector instead of pressing a focused button with Full Keyboard Access (`ContentView.swift:140`).
+- [ ] New Disk Image, Open Left/Right and Disk Image Info do nothing while the main window is closed (`ProBrowseApp.swift:89-116`).
+- [ ] Rename keeps the old GS/OS lowercase bits (`ProDOSWriter.swift:1244-1256`).
+- [ ] UCSD dates use `Calendar.current` (`UCSDPascalParser.swift:179`).
+- [ ] New images carry only 128 bytes of the boot loader; booting drops into the monitor (`ProDOSWriter.swift:1363-1376`).
+- [ ] No data integrity check for P8 ShrinkIt (v1/v2, LZW/1 CRC ignored, `NuFXArchive.swift:492-498`); gzip/zip CRC32 never checked and output silently truncated at the cap (`GzipZipArchive.swift:104-123`).
+- [ ] `$E12000` labelled `SHRSCB`; SCBs are at `$E19D00` (`Disassembler65816.swift:450`).
+- [ ] `NuFXParser.swift` is dead code (its `padToFloppySize` would corrupt a 400K image).
+- [ ] Help: claims ShrinkIt/Binary II write support (`HelpWindow.swift:151`); says Cmd+I is Get Info (`:178`, also `CatalogEntryRow.swift:289`) but it opens the inspector; describes "File > New Directory" and picture double-click/export that do not exist (`:185`, `:352-353`).
+- [ ] `MARKETING_VERSION = 1.7` vs CHANGELOG `[2.6]`; CHANGELOG lacks the Space shortcut, window reopening and sandbox fixes.
+- [ ] Tests cover none of the above.
+
+## Checked and found correct
+
+ProDOS block↔sector map, DOS 3.3 bitmap order, ProDOS dates, directory header fields,
+storage-type boundaries, 2IMG offset; opcode tables, M/X tracking, Applesoft tokens, ShrinkIt
+LZW/1 and LZW/2, NuFX and Binary II header offsets, zip central directory; HGR/DHGR/SHR
+layout, PackBytes, APF, Paintworks, icon and font headers, AWP/ADB parsing, Teach resource map,
+Merlin fields; `LZWDecompressor.swift`; the three commits since 2026-10-13 (Space shortcut,
+640-mode Finder icons, drag-state removal).
+
+## Proposed order of work
+
+1. Resource forks on copy/cut, and serialize writes per image.
+2. The other data-loss items in section 1.
+3. The two hangs in section 2.
+4. Section 3, then section 4.
+
+---
+
+# ProBrowse audit — 2026-10-12 (all fixed)
 
 Audit date: 2026-10-12, at commit `92c3925`. Read-only: no source was changed.
 
