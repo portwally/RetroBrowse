@@ -136,6 +136,13 @@ struct ContentView: View {
                     return nil
                 }
                 
+                // Up and down arrows move the selection; with Shift they extend it
+                if (modifiers.isEmpty || modifiers == .shift) && (event.keyCode == 125 || event.keyCode == 126)
+                    && activeVM.catalog != nil {
+                    activeVM.moveSelection(by: event.keyCode == 125 ? 1 : -1, extend: modifiers == .shift)
+                    return nil
+                }
+
                 // Space inspects the selected file, like the Inspect button (and Quick Look in Finder)
                 if modifiers.isEmpty && event.keyCode == 49 && activeVM.canInspect {
                     activeVM.inspectSelectedFile()

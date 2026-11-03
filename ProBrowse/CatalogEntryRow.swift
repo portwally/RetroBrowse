@@ -23,12 +23,16 @@ struct CatalogEntryRow: View {
     let onDelete: ((DiskCatalogEntry) -> Void)?
     let dragProvider: ((DiskCatalogEntry) -> NSItemProvider)?
     let level: Int
-    let expansion: ExpansionCommand
+    /// Open/closed state of folders, kept by the pane's view model
+    let isExpanded: (DiskCatalogEntry) -> Bool
+    let setExpanded: (DiskCatalogEntry, Bool) -> Void
     @ObservedObject var columnWidths: ColumnWidths
     
-    @State private var isExpanded: Bool
-    
-    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, expansion: ExpansionCommand, columnWidths: ColumnWidths) {
+    private var expandedBinding: Binding<Bool> {
+        Binding(get: { isExpanded(entry) }, set: { setExpanded(entry, $0) })
+    }
+
+    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, isExpanded: @escaping (DiskCatalogEntry) -> Bool, setExpanded: @escaping (DiskCatalogEntry, Bool) -> Void, columnWidths: ColumnWidths) {
         self.entry = entry
         self.isSelected = isSelected
         self.onToggle = onToggle
@@ -44,10 +48,9 @@ struct CatalogEntryRow: View {
         self.onDelete = onDelete
         self.dragProvider = dragProvider
         self.level = level
-        self.expansion = expansion
+        self.isExpanded = isExpanded
+        self.setExpanded = setExpanded
         self.columnWidths = columnWidths
-        // Folders that appear after Expand All (inside an expanded folder) open too
-        _isExpanded = State(initialValue: expansion.expand)
     }
     
     var body: some View {
@@ -56,7 +59,7 @@ struct CatalogEntryRow: View {
             CatalogEntryRowContent(
                 entry: entry,
                 isSelected: isSelected(entry),
-                isExpanded: $isExpanded,
+                isExpanded: expandedBinding,
                 level: level,
                 onToggle: onToggle,
                 onDoubleClick: onDoubleClick,
@@ -78,7 +81,7 @@ struct CatalogEntryRow: View {
             }
             
             // Children (if expanded)
-            if isExpanded, let children = entry.children, !children.isEmpty {
+            if isExpanded(entry), let children = entry.children, !children.isEmpty {
                 ForEach(children) { child in
                     CatalogEntryRow(
                         entry: child,
@@ -96,15 +99,11 @@ struct CatalogEntryRow: View {
                         onDelete: onDelete,
                         dragProvider: dragProvider,
                         level: level + 1,
-                        expansion: expansion,
+                        isExpanded: isExpanded,
+                        setExpanded: setExpanded,
                         columnWidths: columnWidths
                     )
                 }
-            }
-        }
-        .onChange(of: expansion) { _, command in
-            if entry.isDirectory {
-                isExpanded = command.expand
             }
         }
     }
@@ -243,6 +242,7 @@ struct CatalogEntryRowContent: View {
             }
         }
         .frame(height: 22)
+        .id(entry.id)   // lets the list scroll to this row
         .contentShape(Rectangle())
         .contextMenu {
             // Copy/Cut/Paste

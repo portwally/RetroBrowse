@@ -82,7 +82,8 @@ struct DiskBrowserPane: View {
         }
         .sheet(isPresented: $viewModel.showingInspector) {
             if let entry = viewModel.inspectorEntry {
-                FileInspectorSheet(entry: entry, siblings: viewModel.siblings(of: entry))
+                FileInspectorSheet(entry: entry, siblings: viewModel.siblings(of: entry),
+                                   onMove: { viewModel.moveSelection(by: $0) })
             }
         }
     }
@@ -208,11 +209,17 @@ struct DiskBrowserPane: View {
             }
         }()
         
-        return ScrollView {
-            VStack(spacing: 0) {
-                ForEach(entriesToShow) { entry in
-                    catalogEntryRowWithDrag(entry: entry)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(entriesToShow) { entry in
+                        catalogEntryRowWithDrag(entry: entry)
+                    }
                 }
+            }
+            // Keep the row picked with the arrow keys on screen
+            .onChange(of: viewModel.scrollTarget) { _, target in
+                if let target { proxy.scrollTo(target) }
             }
         }
         .background(skin.paneBackground)
@@ -283,7 +290,8 @@ struct DiskBrowserPane: View {
             },
             dragProvider: { createDragProvider(for: $0) },
             level: 0,
-            expansion: viewModel.expansion,
+            isExpanded: { viewModel.isExpanded($0) },
+            setExpanded: { viewModel.setExpanded($0, $1) },
             columnWidths: columnWidths
         )
     }

@@ -217,6 +217,7 @@ struct FileInspectorHelpView: View {
                 HelpBullet("Or press **Space** or **Cmd+I** with a file selected")
                 HelpBullet("Or click the magnifying glass icon in the toolbar")
                 HelpBullet("Press **Space** or **Esc** again to close it, like Quick Look in the Finder")
+                HelpBullet("While it is open, **Up** and **Down** move to the file above or below, and the inspector shows that file")
             }
 
             HelpSection("Content Tab") {
@@ -325,6 +326,7 @@ struct ShortcutsHelpView: View {
 
             HelpSection("Navigation") {
                 ShortcutRow(keys: "Space or Cmd + I", action: "Inspect File (Space again closes it)")
+                ShortcutRow(keys: "Up / Down", action: "Move the selection (with Shift: extend it)")
                 ShortcutRow(keys: "Double-click", action: "Open directory")
                 ShortcutRow(keys: "Cmd + click", action: "Add to selection")
                 ShortcutRow(keys: "Shift + click", action: "Range selection")

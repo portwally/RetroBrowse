@@ -13,6 +13,8 @@ struct FileInspectorSheet: View {
     let entry: DiskCatalogEntry
     /// The other files in the same folder, for formats that keep data in a companion file
     var siblings: [DiskCatalogEntry] = []
+    /// Moves the pane's selection up (-1) or down (+1); the inspector then shows that file
+    var onMove: ((Int) -> Void)? = nil
 
     enum InspectorTab: String, CaseIterable {
         case content = "Content"
@@ -69,15 +71,19 @@ struct FileInspectorSheet: View {
 
             Divider()
 
-            // Tab Content
-            switch selectedTab {
-            case .content:
-                FileContentView(entry: entry, siblings: siblings)
-            case .hex:
-                HexDumpView(data: entry.data)
-            case .info:
-                FileInfoView(entry: entry)
+            // Tab Content. Rebuilt for each file, so previews and players start fresh
+            // when the arrow keys move to another file.
+            Group {
+                switch selectedTab {
+                case .content:
+                    FileContentView(entry: entry, siblings: siblings)
+                case .hex:
+                    HexDumpView(data: entry.data)
+                case .info:
+                    FileInfoView(entry: entry)
+                }
             }
+            .id(entry.id)
 
             Divider()
 
@@ -94,11 +100,18 @@ struct FileInspectorSheet: View {
                 }
                 .keyboardShortcut(.escape, modifiers: [])
                 .background(
-                    // Space closes the inspector again, like Quick Look in the Finder
-                    Button("") { dismiss() }
-                        .keyboardShortcut(.space, modifiers: [])
-                        .opacity(0)
-                        .accessibilityHidden(true)
+                    // Space closes the inspector again, like Quick Look in the Finder;
+                    // the arrow keys move to the file above or below in the pane
+                    ZStack {
+                        Button("") { dismiss() }
+                            .keyboardShortcut(.space, modifiers: [])
+                        Button("") { onMove?(-1) }
+                            .keyboardShortcut(.upArrow, modifiers: [])
+                        Button("") { onMove?(1) }
+                            .keyboardShortcut(.downArrow, modifiers: [])
+                    }
+                    .opacity(0)
+                    .accessibilityHidden(true)
                 )
             }
             .padding()

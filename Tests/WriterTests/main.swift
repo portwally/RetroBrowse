@@ -792,6 +792,53 @@ do {
     check(errors.count == 1 && (try! Data(contentsOf: dosURL)) == before, "New Folder is refused on a DOS 3.3 disk")
 }
 
+// MARK: - View model: arrow-key navigation and open folders
+
+do {
+    var errors: [String] = []
+    let url = newProDOSImage("arrows.po", size: "800KB")
+    check(wait { ProDOSWriter.shared.createDirectory(diskImagePath: url, directoryName: "DIR", parentPath: "/", completion: $0) }.ok, "create /DIR")
+    check(add(url, "A", Data("a".utf8), parent: "/DIR/").ok && add(url, "B", Data("b".utf8), parent: "/DIR/").ok
+          && add(url, "Z", Data("z".utf8)).ok, "add files for the arrow-key tests")
+    let pane = makePane(url) { errors.append($0) }
+    func names() -> [String] { pane.getSelectedEntries().map { $0.name }.sorted() }
+
+    check(pane.visibleEntries.map { $0.name } == ["DIR", "Z"], "a closed folder hides its files")
+    pane.moveSelection(by: 1)
+    check(names() == ["DIR"], "Down with nothing selected picks the first row")
+    pane.expandAll()
+    check(pane.visibleEntries.map { $0.name } == ["DIR", "A", "B", "Z"], "Expand All shows the folder's files in order")
+    pane.moveSelection(by: 1)
+    check(names() == ["A"], "Down moves into the open folder")
+    pane.moveSelection(by: 1, extend: true)
+    check(names() == ["A", "B"], "Shift+Down extends the selection")
+    pane.moveSelection(by: -1)
+    check(names() == ["A"], "Up moves back and replaces the selection")
+    pane.moveSelection(by: -1)
+    pane.moveSelection(by: -1)
+    check(names() == ["DIR"], "Up stops at the first row")
+
+    // With the inspector open, folders are stepped over and the inspector follows
+    pane.moveSelection(by: 1)
+    pane.showInspector(pane.getSelectedEntries()[0])
+    pane.moveSelection(by: 1)
+    pane.moveSelection(by: 1)
+    check(pane.inspectorEntry?.name == "Z" && names() == ["Z"], "the open inspector follows the selection")
+    pane.moveSelection(by: -1)
+    pane.moveSelection(by: -1)
+    pane.moveSelection(by: -1)
+    check(pane.inspectorEntry?.name == "A", "the inspector skips folders and stays on the first file")
+    pane.showingInspector = false
+
+    // Open folders stay open when the same image reloads after a change
+    check(add(url, "Y", Data("y".utf8)).ok, "add a file")
+    pane.loadDiskImage(from: url)
+    check(pane.isExpanded(pane.visibleEntries[0]), "folders stay open after the image reloads")
+    pane.collapseAll()
+    check(pane.visibleEntries.count == 3, "Collapse All closes every folder")
+    check(errors.isEmpty, "no errors while navigating, got \(errors)")
+}
+
 // MARK: - .img images: raw and DiskCopy 4.2
 
 do {

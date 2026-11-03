@@ -15,19 +15,15 @@ struct ImportedFile {
     let data: Data
 }
 
-/// An Expand All or Collapse All request. The serial changes on every request, so asking
-/// twice in a row still reaches folders that were opened or closed by hand in between.
-struct ExpansionCommand: Equatable {
-    var serial = 0
-    var expand = false
-}
-
 class DiskPaneViewModel: ObservableObject {
     @Published var catalog: DiskCatalog?
     @Published var diskImagePath: URL?
     @Published var selectedEntries: Set<UUID> = []
-    /// The last Expand All / Collapse All request; folders follow it when it changes
-    @Published var expansion = ExpansionCommand()
+    /// Folders shown open in the list, by directory path, so they stay open when the
+    /// same image is reloaded after a change and arrow keys know which rows are visible
+    @Published var expandedFolders: Set<String> = []
+    /// Row the list should scroll to after the selection moved with the keyboard
+    @Published var scrollTarget: UUID?
     @Published var showingFilePicker = false
     @Published var showingFileInfo = false
     @Published var fileInfoEntry: DiskCatalogEntry?
@@ -394,6 +390,8 @@ class DiskPaneViewModel: ObservableObject {
     private func finishLoading(_ newCatalog: DiskCatalog, from url: URL, isArchiveBacked: Bool) {
         // Stay in the same directory when the same image is reloaded after a change
         let openPath = (url == diskImagePath) ? currentDirectory?.directoryPath : nil
+        // A different image starts with every folder closed
+        if url != diskImagePath { expandedFolders = [] }
         
         didFinishLoading = true
         diskImagePath = url
@@ -688,11 +686,64 @@ class DiskPaneViewModel: ObservableObject {
     }
     
     func expandAll() {
-        expansion = ExpansionCommand(serial: expansion.serial + 1, expand: true)
+        expandedFolders = Set(catalog?.allEntries.filter { $0.isDirectory }.map { $0.directoryPath } ?? [])
     }
 
     func collapseAll() {
-        expansion = ExpansionCommand(serial: expansion.serial + 1, expand: false)
+        expandedFolders = []
+    }
+
+    func isExpanded(_ entry: DiskCatalogEntry) -> Bool {
+        entry.isDirectory && expandedFolders.contains(entry.directoryPath)
+    }
+
+    func setExpanded(_ entry: DiskCatalogEntry, _ expanded: Bool) {
+        guard entry.isDirectory else { return }
+        if expanded { expandedFolders.insert(entry.directoryPath) } else { expandedFolders.remove(entry.directoryPath) }
+    }
+
+    /// The rows on screen, top to bottom: the current directory's entries and the
+    /// contents of every open folder below them
+    var visibleEntries: [DiskCatalogEntry] {
+        var rows: [DiskCatalogEntry] = []
+        func add(_ entries: [DiskCatalogEntry]) {
+            for entry in entries {
+                rows.append(entry)
+                if isExpanded(entry), let children = entry.children { add(children) }
+            }
+        }
+        add(currentDirectory?.children ?? catalog?.rootEntries ?? [])
+        return rows
+    }
+
+    /// Moves the selection one row up (-1) or down (+1), like the arrow keys in the Finder.
+    /// With `extend` the rows passed over are added to the selection. While the inspector
+    /// is open it follows the selection, stepping over folders since it shows files only.
+    func moveSelection(by delta: Int, extend: Bool = false) {
+        let rows = visibleEntries
+        guard !rows.isEmpty, delta != 0 else { return }
+        let current = lastSelectedEntry.flatMap { last in
+            rows.firstIndex { $0.id == last.id } ?? rows.firstIndex { $0.parentPath == last.parentPath && $0.name == last.name }
+        }
+        var index: Int
+        if let current {
+            index = current + delta
+        } else {
+            index = delta > 0 ? 0 : rows.count - 1
+        }
+        if showingInspector {
+            while rows.indices.contains(index) && rows[index].isDirectory { index += delta }
+        }
+        guard rows.indices.contains(index) else { return }
+
+        let target = rows[index]
+        if !extend { selectedEntries.removeAll() }
+        selectedEntries.insert(target.id)
+        lastSelectedEntry = target
+        scrollTarget = target.id
+        if showingInspector {
+            inspectorEntry = target
+        }
     }
     
     // MARK: - Directory Navigation

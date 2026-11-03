@@ -344,3 +344,9 @@ this has been built or run yet.
 - [x] Apple IIGS 640 skin: Shaston 640 (Kreative Software, Relay Fonts Free Use License, credited in Help),
       white windows, black text and lines, yellow GS/OS highlight, IIgs desktop blue toolbar
 - [x] Fix: retro skins now colour whole rows (Norton Commander files were white instead of cyan)
+
+## Arrow-key navigation (2026-11-03)
+- [x] Up/Down move the selection in the active pane through the visible rows (Shift extends); the list scrolls along
+- [x] With the inspector open, Up/Down move to the file above/below (folders are skipped) and the inspector shows it
+- [x] Folder open/closed state moved into the view model: Expand/Collapse All simpler, folders stay open after a reload
+- Checked in the app: SHOT.SND -> CARD.SOUND -> AAAAH in the open inspector; 45 rows down the list scrolls along. 320/320 tests.
