@@ -12,496 +12,399 @@ struct ProDOSFileTypeInfo {
     let shortName: String
     let description: String
     let icon: String
-    
+
     static func getFileTypeInfo(fileType: UInt8, auxType: UInt16 = 0) -> ProDOSFileTypeInfo {
-        
-        // Try to match specific aux type first
-        if let info = getSpecificFileType(fileType: fileType, auxType: auxType) {
+        // A specific aux type first, then the file type in general
+        if let info = specificTypes[fileType]?[auxType] {
             return info
         }
-        
-        // Fall back to generic type
-        return getGenericFileType(fileType: fileType)
+        return genericTypes[fileType]
+            ?? ProDOSFileTypeInfo(shortName: String(format: "$%02X", fileType), description: "Unknown Type", icon: "❓")
     }
-    
-    // MARK: - Specific Aux Type Matches
-    
-    private static func getSpecificFileType(fileType: UInt8, auxType: UInt16) -> ProDOSFileTypeInfo? {
-        switch fileType {
-        case 0x08: // FOT - Graphics
-            switch auxType {
-            case 0x4000: return ProDOSFileTypeInfo(shortName: "HGR", description: "Packed Hi-Res Image", icon: "🖼️")
-            case 0x4001: return ProDOSFileTypeInfo(shortName: "DHGR", description: "Packed Double Hi-Res Image", icon: "🖼️")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "HGR", description: "Printographer Packed HGR", icon: "🖼️")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "DHGR", description: "Printographer Packed DHGR", icon: "🖼️")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "HGR", description: "Softdisk Hi-Res image", icon: "🖼️")
-            case 0x8004: return ProDOSFileTypeInfo(shortName: "DHGR", description: "Softdisk Double Hi-Res", icon: "🖼️")
-            default: return nil
+
+    /// One row of the database: a file type in general (`auxType` nil) or with a specific aux type
+    struct Entry: Identifiable {
+        let fileType: UInt8
+        let auxType: UInt16?
+        let info: ProDOSFileTypeInfo
+        var id: String { String(format: "%02X", fileType) + (auxType.map { String(format: "/%04X", $0) } ?? "") }
+    }
+
+    /// Every known type, each general entry followed by its specific aux types, in file type order
+    static let allEntries: [Entry] = {
+        var rows: [Entry] = []
+        let types = Set(genericTypes.keys).union(specificTypes.keys).sorted()
+        for type in types {
+            if let info = genericTypes[type] { rows.append(Entry(fileType: type, auxType: nil, info: info)) }
+            for (aux, info) in (specificTypes[type] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                rows.append(Entry(fileType: type, auxType: aux, info: info))
             }
-            
-        case 0x0B: // WPF - Word Processor
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "WTW", description: "Write This Way document", icon: "📝")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "W&P", description: "Writing & Publishing document", icon: "📝")
-            default: return nil
-            }
-            
-        case 0x16: // PFS
-            switch auxType {
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS:File document", icon: "📄")
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS:Write document", icon: "📝")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS:Graph document", icon: "📊")
-            case 0x0004: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS:Plan document", icon: "📊")
-            case 0x0016: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS internal data", icon: "📄")
-            default: return nil
-            }
-            
-        case 0x2B: // 8OB - Object Code
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "8OB", description: "GBBS Pro object code", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0x2C: // 8IC - Interpreted Code
-            switch auxType {
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "APX", description: "APEX Program File", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0x2E: // P8C - ProDOS 8 Code
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "DVX", description: "Davex 8 Command", icon: "⚙️")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "PTP", description: "Point-to-Point drivers", icon: "⚙️")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "PTP", description: "Point-to-Point code", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0x41: // OCR
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "OCR", description: "InWords OCR font table", icon: "🔤")
-            default: return nil
-            }
-            
-        case 0x50: // GWP - Word Processor
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "DWR", description: "DeluxeWrite document", icon: "📝")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "PJR", description: "Personal Journal document", icon: "📓")
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Word Processor", icon: "📝")
-            case 0x8011: return ProDOSFileTypeInfo(shortName: "SD", description: "Softdisk issue text", icon: "📝")
-            case 0x5445: return ProDOSFileTypeInfo(shortName: "TCH", description: "Teach document", icon: "📚")
-            default: return nil
-            }
-            
-        case 0x51: // GSS - Spreadsheet
-            switch auxType {
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Spreadsheet", icon: "📊")
-            default: return nil
-            }
-            
-        case 0x52: // GDB - Database
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "GTV", description: "GTv database", icon: "🗄️")
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Database", icon: "🗄️")
-            case 0x8011: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS DB Template", icon: "🗄️")
-            case 0x8013: return ProDOSFileTypeInfo(shortName: "GSAS", description: "GSAS database", icon: "🗄️")
-            case 0x8014: return ProDOSFileTypeInfo(shortName: "GSAS", description: "GSAS accounting journals", icon: "💰")
-            case 0x8015: return ProDOSFileTypeInfo(shortName: "ADR", description: "Address Manager document", icon: "📇")
-            case 0x8016: return ProDOSFileTypeInfo(shortName: "ADR", description: "Address Manager defaults", icon: "📇")
-            case 0x8017: return ProDOSFileTypeInfo(shortName: "ADR", description: "Address Manager index", icon: "📇")
-            default: return nil
-            }
-            
-        case 0x53: // DRW - Drawing
-            switch auxType {
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "GDL", description: "Graphic Disk Labeler", icon: "🎨")
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Graphics", icon: "🎨")
-            default: return nil
-            }
-            
-        case 0x54: // GDP - Desktop Publishing
-            switch auxType {
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "GWR", description: "GraphicWriter document", icon: "📰")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "LBL", description: "Label It document", icon: "🏷️")
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Page Layout", icon: "📰")
-            case 0xDD3E: return ProDOSFileTypeInfo(shortName: "MDL", description: "Medley document", icon: "📰")
-            default: return nil
-            }
-            
-        case 0x55: // HMD - Hypermedia
-            switch auxType {
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "HC", description: "HyperCard IIgs stack", icon: "🗂️")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "TTH", description: "Tutor-Tech document", icon: "📚")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperStudio document", icon: "🗂️")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "NXS", description: "Nexus document", icon: "🗂️")
-            case 0x8004: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperSoft stack", icon: "🗂️")
-            case 0x8005: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperSoft card", icon: "🗂️")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperSoft external command", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0x56: // EDU - Educational
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "TTH", description: "Tutor-Tech Scores", icon: "📚")
-            case 0x8007: return ProDOSFileTypeInfo(shortName: "GRD", description: "GradeBook Data", icon: "📚")
-            default: return nil
-            }
-            
-        case 0x57: // STN - Stationery
-            switch auxType {
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "MW", description: "Music Writer format", icon: "🎵")
-            default: return nil
-            }
-            
-        case 0x58: // HLP - Help
-            switch auxType {
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "DVX", description: "Davex 8 Help File", icon: "❓")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "LOC", description: "Locator help document", icon: "❓")
-            case 0x8007: return ProDOSFileTypeInfo(shortName: "PJR", description: "Personal Journal help", icon: "❓")
-            case 0x8008: return ProDOSFileTypeInfo(shortName: "HR", description: "Home Refinancer help", icon: "❓")
-            default: return nil
-            }
-            
-        case 0x59: // COM - Communications
-            switch auxType {
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS Communications", icon: "📡")
-            default: return nil
-            }
-            
-        case 0x5A: // CFG - Configuration
-            switch auxType {
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "RAM", description: "Battery RAM configuration", icon: "⚙️")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "ALN", description: "AutoLaunch preferences", icon: "⚙️")
-            case 0x0005: return ProDOSFileTypeInfo(shortName: "GSB", description: "GSBug configuration", icon: "⚙️")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "MTJ", description: "Master Tracks Jr. preferences", icon: "⚙️")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "GWR", description: "GraphicWriter preferences", icon: "⚙️")
-            case 0x8005: return ProDOSFileTypeInfo(shortName: "DVX", description: "Davex 8 configuration", icon: "⚙️")
-            case 0x8009: return ProDOSFileTypeInfo(shortName: "PTP", description: "Point-to-Point preferences", icon: "⚙️")
-            case 0x8010: return ProDOSFileTypeInfo(shortName: "AWGS", description: "AppleWorks GS configuration", icon: "⚙️")
-            case 0x801C: return ProDOSFileTypeInfo(shortName: "PP", description: "Platinum Paint preferences", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0x5B: // ANM - Animation
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "CTN", description: "Cartooners movie", icon: "🎬")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "CTN", description: "Cartooners actors", icon: "🎬")
-            case 0x8005: return ProDOSFileTypeInfo(shortName: "AK", description: "Arcade King Super document", icon: "🎬")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "AK", description: "Arcade King DHRG document", icon: "🎬")
-            case 0x8007: return ProDOSFileTypeInfo(shortName: "DV", description: "DreamVision movie", icon: "🎬")
-            default: return nil
-            }
-            
-        case 0x5C: // MUM - Multimedia
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "GTV", description: "GTv multimedia playlist", icon: "🎭")
-            default: return nil
-            }
-            
-        case 0x5D: // ENT - Entertainment
-            switch auxType {
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "SR", description: "Solitaire Royale document", icon: "🎮")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "BF", description: "BattleFront scenario", icon: "🎮")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "BF", description: "BattleFront saved game", icon: "🎮")
-            case 0x8004: return ProDOSFileTypeInfo(shortName: "GA", description: "Gold of the Americas game", icon: "🎮")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "BJT", description: "Blackjack Tutor document", icon: "🎮")
-            default: return nil
-            }
-            
-        case 0x5E: // DVU - Development
-            switch auxType {
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "RSC", description: "Resource file", icon: "🔧")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "ORC", description: "ORCA/Disassembler template", icon: "🔧")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "DSM", description: "DesignMaster document", icon: "🔧")
-            default: return nil
-            }
-            
-        case 0x5F: // FIN - Financial
-            switch auxType {
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "HR", description: "Home Refinancer document", icon: "💰")
-            default: return nil
-            }
-            
-        case 0xB0: // SRC - Source Code
-            switch auxType {
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "TXT", description: "APW Text file", icon: "📄")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "ASM", description: "APW 65816 Assembly source", icon: "📄")
-            case 0x0005: return ProDOSFileTypeInfo(shortName: "PAS", description: "ORCA/Pascal source code", icon: "📄")
-            case 0x0006: return ProDOSFileTypeInfo(shortName: "CMD", description: "APW command file", icon: "⚙️")
-            case 0x0008: return ProDOSFileTypeInfo(shortName: "C", description: "ORCA/C source code", icon: "📄")
-            case 0x0009: return ProDOSFileTypeInfo(shortName: "LNK", description: "APW Linker command file", icon: "⚙️")
-            case 0x000A: return ProDOSFileTypeInfo(shortName: "C", description: "APW C source code", icon: "📄")
-            case 0x000C: return ProDOSFileTypeInfo(shortName: "CMD", description: "ORCA/Desktop command file", icon: "⚙️")
-            case 0x0015: return ProDOSFileTypeInfo(shortName: "REZ", description: "APW Rez source file", icon: "📄")
-            case 0x0017: return ProDOSFileTypeInfo(shortName: "INS", description: "Installer script", icon: "⚙️")
-            case 0x001E: return ProDOSFileTypeInfo(shortName: "PAS", description: "TML Pascal source code", icon: "📄")
-            case 0x0116: return ProDOSFileTypeInfo(shortName: "SCR", description: "ORCA/Disassembler script", icon: "📄")
-            case 0x0503: return ProDOSFileTypeInfo(shortName: "ASM", description: "SDE Assembler source code", icon: "📄")
-            case 0x0506: return ProDOSFileTypeInfo(shortName: "CMD", description: "SDE command script", icon: "⚙️")
-            case 0x0601: return ProDOSFileTypeInfo(shortName: "NFL", description: "Nifty List data", icon: "📄")
-            case 0x0719: return ProDOSFileTypeInfo(shortName: "PS", description: "PostScript file", icon: "📄")
-            default: return nil
-            }
-            
-        case 0xBB: // DVR - Device Driver
-            switch auxType {
-            case 0x7F01: return ProDOSFileTypeInfo(shortName: "GTV", description: "GTv videodisc serial driver", icon: "💿")
-            case 0x7F02: return ProDOSFileTypeInfo(shortName: "GTV", description: "GTv videodisc game port driver", icon: "💿")
-            default: return nil
-            }
-            
-        case 0xBC: // LDF - Load File
-            switch auxType {
-            case 0x4001: return ProDOSFileTypeInfo(shortName: "NFL", description: "Nifty List Module", icon: "⚙️")
-            case 0x4002: return ProDOSFileTypeInfo(shortName: "SI", description: "Super Info module", icon: "⚙️")
-            case 0x4004: return ProDOSFileTypeInfo(shortName: "TWL", description: "Twilight document", icon: "⚙️")
-            case 0x4007: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperStudio New Button Action", icon: "⚙️")
-            case 0x4008: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperStudio Screen Transition", icon: "⚙️")
-            case 0x4009: return ProDOSFileTypeInfo(shortName: "DGX", description: "DreamGrafix module", icon: "⚙️")
-            case 0x400A: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperStudio Extra utility", icon: "⚙️")
-            case 0x400F: return ProDOSFileTypeInfo(shortName: "HP", description: "HardPressed compression module", icon: "⚙️")
-            default: return nil
-            }
-            
-        case 0xC0: // PNT - Packed Super Hi-Res
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "PNT", description: "Paintworks Packed picture", icon: "🎨")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "SHR", description: "Packed Super Hi-Res Image", icon: "🖼️")
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "APF", description: "Apple Preferred Format picture", icon: "🖼️")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "PICT", description: "Packed QuickDraw II PICT file", icon: "🖼️")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "GTV", description: "GTv background image", icon: "🖼️")
-            case 0x8005: return ProDOSFileTypeInfo(shortName: "DGX", description: "DreamGrafix document", icon: "🎨")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "GIF", description: "GIF document", icon: "🖼️")
-            default: return nil
-            }
-            
-        case 0xC1: // PIC - Super Hi-Res
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "SHR", description: "Super Hi-Res Screen image", icon: "🖼️")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "PICT", description: "QuickDraw PICT file", icon: "🖼️")
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "SHR", description: "Super Hi-Res 3200 color image", icon: "🖼️")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "ALL", description: "Allison raw image doc", icon: "🖼️")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "THN", description: "ThunderScan image doc", icon: "🖼️")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "DGX", description: "DreamGrafix document", icon: "🎨")
-            default: return nil
-            }
-            
-        case 0xC5: // OOG - Object-Oriented Graphics
-            switch auxType {
-            case 0x8000: return ProDOSFileTypeInfo(shortName: "DP", description: "Draw Plus document", icon: "🎨")
-            case 0xC000: return ProDOSFileTypeInfo(shortName: "DYOH", description: "DYOH Architecture doc", icon: "🏗️")
-            case 0xC001: return ProDOSFileTypeInfo(shortName: "DYOH", description: "DYOH predrawn objects", icon: "🏗️")
-            case 0xC002: return ProDOSFileTypeInfo(shortName: "DYOH", description: "DYOH custom objects", icon: "🏗️")
-            case 0xC003: return ProDOSFileTypeInfo(shortName: "DYOH", description: "DYOH clipboard", icon: "🏗️")
-            case 0xC006: return ProDOSFileTypeInfo(shortName: "DYOH", description: "DYOH Landscape Document", icon: "🏗️")
-            case 0xC007: return ProDOSFileTypeInfo(shortName: "PYW", description: "PyWare Document", icon: "🎨")
-            case 0xC008: return ProDOSFileTypeInfo(shortName: "AN3", description: "Animasia 3-D Project", icon: "🎬")
-            default: return nil
-            }
-            
-        case 0xC8: // FON - Font
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "FON", description: "QuickDraw II Font", icon: "🔤")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "TTF", description: "TrueType font", icon: "🔤")
-            default: return nil
-            }
-            
-        case 0xD5: // MUS - Music
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "MCS", description: "Music Construction Set song", icon: "🎵")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "MID", description: "MIDI Synth sequence", icon: "🎵")
-            case 0x0007: return ProDOSFileTypeInfo(shortName: "SS", description: "SoundSmith document", icon: "🎵")
-            case 0x0008: return ProDOSFileTypeInfo(shortName: "NTP", description: "NinjaTrackerPlus sequence", icon: "🎵")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "DT", description: "Diversi-Tune sequence", icon: "🎵")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "MTJ", description: "Master Tracks Jr. sequence", icon: "🎵")
-            case 0x8005: return ProDOSFileTypeInfo(shortName: "AK", description: "Arcade King Super music", icon: "🎵")
-            default: return nil
-            }
-            
-        case 0xD6: // INS - Instrument
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "MCS", description: "Music Construction Set instrument", icon: "🎹")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "MID", description: "MIDI Synth instrument", icon: "🎹")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "DT", description: "Diversi-Tune instrument", icon: "🎹")
-            default: return nil
-            }
-            
-        case 0xD7: // MDI - MIDI
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "MID", description: "MIDI standard data", icon: "🎵")
-            default: return nil
-            }
-            
-        case 0xD8: // SND - Sound
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "AIFF", description: "Audio IFF document", icon: "🔊")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "AIFC", description: "AIFF-C document", icon: "🔊")
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "ASIF", description: "ASIF instrument", icon: "🔊")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "SND", description: "Sound resource file", icon: "🔊")
-            case 0x0004: return ProDOSFileTypeInfo(shortName: "MID", description: "MIDI Synth wave data", icon: "🔊")
-            case 0x0005: return ProDOSFileTypeInfo(shortName: "CDDA", description: "CD Digital Audio Track", icon: "💿")
-            case 0x0006: return ProDOSFileTypeInfo(shortName: "CDDD", description: "CD Digital Data Track", icon: "💿")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "HS", description: "HyperStudio sound", icon: "🔊")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "AK", description: "Arcade King Super sound", icon: "🔊")
-            case 0x8003: return ProDOSFileTypeInfo(shortName: "SO", description: "SoundOff! sound bank", icon: "🔊")
-            default: return nil
-            }
-            
-        case 0xDB: // DBM - DB Master
-            switch auxType {
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "DBM", description: "DB Master document", icon: "🗄️")
-            default: return nil
-            }
-            
-        case 0xE0: // LBR - Library/Archive
-            switch auxType {
-            case 0x0000: return ProDOSFileTypeInfo(shortName: "ALU", description: "ALU library", icon: "📦")
-            case 0x0001: return ProDOSFileTypeInfo(shortName: "AS", description: "AppleSingle File", icon: "📦")
-            case 0x0002: return ProDOSFileTypeInfo(shortName: "AD", description: "AppleDouble Header File", icon: "📦")
-            case 0x0003: return ProDOSFileTypeInfo(shortName: "AD", description: "AppleDouble Data File", icon: "📦")
-            case 0x0005: return ProDOSFileTypeInfo(shortName: "DC", description: "DiskCopy disk image", icon: "💾")
-            case 0x8000: return ProDOSFileTypeInfo(shortName: "BNY", description: "Binary II File", icon: "📦")
-            case 0x8001: return ProDOSFileTypeInfo(shortName: "ACU", description: "AppleLink ACU document", icon: "📦")
-            case 0x8002: return ProDOSFileTypeInfo(shortName: "SHK", description: "ShrinkIt (NuFX) document", icon: "📦")
-            case 0x8004: return ProDOSFileTypeInfo(shortName: "DVX", description: "Davex archived volume", icon: "📦")
-            case 0x8006: return ProDOSFileTypeInfo(shortName: "EZB", description: "EZ Backup Saveset doc", icon: "📦")
-            case 0x8007: return ProDOSFileTypeInfo(shortName: "ELS", description: "ELS DOS 3.3 volume", icon: "💾")
-            case 0x8009: return ProDOSFileTypeInfo(shortName: "UW", description: "UtilityWorks document", icon: "📦")
-            case 0x800A: return ProDOSFileTypeInfo(shortName: "REP", description: "Replicator document", icon: "📦")
-            case 0x800D: return ProDOSFileTypeInfo(shortName: "HP", description: "HardPressed (data fork)", icon: "📦")
-            case 0x800E: return ProDOSFileTypeInfo(shortName: "HP", description: "HardPressed (rsrc fork)", icon: "📦")
-            case 0x800F: return ProDOSFileTypeInfo(shortName: "HP", description: "HardPressed (both forks)", icon: "📦")
-            default: return nil
-            }
-            
-        case 0xE2: // ATK - AppleTalk
-            switch auxType {
-            case 0xFFFF: return ProDOSFileTypeInfo(shortName: "EM", description: "EasyMount document", icon: "🌐")
-            default: return nil
-            }
-            
-        default:
-            return nil
         }
+        return rows
+    }()
+
+    private static func t(_ shortName: String, _ description: String, _ icon: String) -> ProDOSFileTypeInfo {
+        ProDOSFileTypeInfo(shortName: shortName, description: description, icon: icon)
     }
-    
+
+    // MARK: - Specific Aux Types
+
+    private static let specificTypes: [UInt8: [UInt16: ProDOSFileTypeInfo]] = [
+        0x08: [
+            0x4000: t("HGR", "Packed Hi-Res Image", "🖼️"),
+            0x4001: t("DHGR", "Packed Double Hi-Res Image", "🖼️"),
+            0x8001: t("HGR", "Printographer Packed HGR", "🖼️"),
+            0x8002: t("DHGR", "Printographer Packed DHGR", "🖼️"),
+            0x8003: t("HGR", "Softdisk Hi-Res image", "🖼️"),
+            0x8004: t("DHGR", "Softdisk Double Hi-Res", "🖼️"),
+        ],
+        0x0B: [
+            0x8001: t("WTW", "Write This Way document", "📝"),
+            0x8002: t("W&P", "Writing & Publishing document", "📝"),
+        ],
+        0x16: [
+            0x0001: t("PFS", "PFS:File document", "📄"),
+            0x0002: t("PFS", "PFS:Write document", "📝"),
+            0x0003: t("PFS", "PFS:Graph document", "📊"),
+            0x0004: t("PFS", "PFS:Plan document", "📊"),
+            0x0016: t("PFS", "PFS internal data", "📄"),
+        ],
+        0x2B: [
+            0x8001: t("8OB", "GBBS Pro object code", "⚙️"),
+        ],
+        0x2C: [
+            0x8003: t("APX", "APEX Program File", "⚙️"),
+        ],
+        0x2E: [
+            0x8001: t("DVX", "Davex 8 Command", "⚙️"),
+            0x8002: t("PTP", "Point-to-Point drivers", "⚙️"),
+            0x8003: t("PTP", "Point-to-Point code", "⚙️"),
+        ],
+        0x41: [
+            0x8001: t("OCR", "InWords OCR font table", "🔤"),
+        ],
+        0x50: [
+            0x8001: t("DWR", "DeluxeWrite document", "📝"),
+            0x8003: t("PJR", "Personal Journal document", "📓"),
+            0x8010: t("AWGS", "AppleWorks GS Word Processor", "📝"),
+            0x8011: t("SD", "Softdisk issue text", "📝"),
+            0x5445: t("TCH", "Teach document", "📚"),
+        ],
+        0x51: [
+            0x8010: t("AWGS", "AppleWorks GS Spreadsheet", "📊"),
+        ],
+        0x52: [
+            0x8001: t("GTV", "GTv database", "🗄️"),
+            0x8010: t("AWGS", "AppleWorks GS Database", "🗄️"),
+            0x8011: t("AWGS", "AppleWorks GS DB Template", "🗄️"),
+            0x8013: t("GSAS", "GSAS database", "🗄️"),
+            0x8014: t("GSAS", "GSAS accounting journals", "💰"),
+            0x8015: t("ADR", "Address Manager document", "📇"),
+            0x8016: t("ADR", "Address Manager defaults", "📇"),
+            0x8017: t("ADR", "Address Manager index", "📇"),
+        ],
+        0x53: [
+            0x8002: t("GDL", "Graphic Disk Labeler", "🎨"),
+            0x8010: t("AWGS", "AppleWorks GS Graphics", "🎨"),
+        ],
+        0x54: [
+            0x8002: t("GWR", "GraphicWriter document", "📰"),
+            0x8003: t("LBL", "Label It document", "🏷️"),
+            0x8010: t("AWGS", "AppleWorks GS Page Layout", "📰"),
+            0xDD3E: t("MDL", "Medley document", "📰"),
+        ],
+        0x55: [
+            0x0001: t("HC", "HyperCard IIgs stack", "🗂️"),
+            0x8001: t("TTH", "Tutor-Tech document", "📚"),
+            0x8002: t("HS", "HyperStudio document", "🗂️"),
+            0x8003: t("NXS", "Nexus document", "🗂️"),
+            0x8004: t("HS", "HyperSoft stack", "🗂️"),
+            0x8005: t("HS", "HyperSoft card", "🗂️"),
+            0x8006: t("HS", "HyperSoft external command", "⚙️"),
+        ],
+        0x56: [
+            0x8001: t("TTH", "Tutor-Tech Scores", "📚"),
+            0x8007: t("GRD", "GradeBook Data", "📚"),
+        ],
+        0x57: [
+            0x8003: t("MW", "Music Writer format", "🎵"),
+        ],
+        0x58: [
+            0x8002: t("DVX", "Davex 8 Help File", "❓"),
+            0x8006: t("LOC", "Locator help document", "❓"),
+            0x8007: t("PJR", "Personal Journal help", "❓"),
+            0x8008: t("HR", "Home Refinancer help", "❓"),
+        ],
+        0x59: [
+            0x8010: t("AWGS", "AppleWorks GS Communications", "📡"),
+        ],
+        0x5A: [
+            0x0002: t("RAM", "Battery RAM configuration", "⚙️"),
+            0x0003: t("ALN", "AutoLaunch preferences", "⚙️"),
+            0x0005: t("GSB", "GSBug configuration", "⚙️"),
+            0x8001: t("MTJ", "Master Tracks Jr. preferences", "⚙️"),
+            0x8002: t("GWR", "GraphicWriter preferences", "⚙️"),
+            0x8005: t("DVX", "Davex 8 configuration", "⚙️"),
+            0x8009: t("PTP", "Point-to-Point preferences", "⚙️"),
+            0x8010: t("AWGS", "AppleWorks GS configuration", "⚙️"),
+            0x801C: t("PP", "Platinum Paint preferences", "⚙️"),
+        ],
+        0x5B: [
+            0x8001: t("CTN", "Cartooners movie", "🎬"),
+            0x8002: t("CTN", "Cartooners actors", "🎬"),
+            0x8005: t("AK", "Arcade King Super document", "🎬"),
+            0x8006: t("AK", "Arcade King DHRG document", "🎬"),
+            0x8007: t("DV", "DreamVision movie", "🎬"),
+        ],
+        0x5C: [
+            0x8001: t("GTV", "GTv multimedia playlist", "🎭"),
+        ],
+        0x5D: [
+            0x8001: t("SR", "Solitaire Royale document", "🎮"),
+            0x8002: t("BF", "BattleFront scenario", "🎮"),
+            0x8003: t("BF", "BattleFront saved game", "🎮"),
+            0x8004: t("GA", "Gold of the Americas game", "🎮"),
+            0x8006: t("BJT", "Blackjack Tutor document", "🎮"),
+        ],
+        0x5E: [
+            0x0001: t("RSC", "Resource file", "🔧"),
+            0x8001: t("ORC", "ORCA/Disassembler template", "🔧"),
+            0x8003: t("DSM", "DesignMaster document", "🔧"),
+        ],
+        0x5F: [
+            0x8002: t("HR", "Home Refinancer document", "💰"),
+        ],
+        0xB0: [
+            0x0001: t("TXT", "APW Text file", "📄"),
+            0x0003: t("ASM", "APW 65816 Assembly source", "📄"),
+            0x0005: t("PAS", "ORCA/Pascal source code", "📄"),
+            0x0006: t("CMD", "APW command file", "⚙️"),
+            0x0008: t("C", "ORCA/C source code", "📄"),
+            0x0009: t("LNK", "APW Linker command file", "⚙️"),
+            0x000A: t("C", "APW C source code", "📄"),
+            0x000C: t("CMD", "ORCA/Desktop command file", "⚙️"),
+            0x0015: t("REZ", "APW Rez source file", "📄"),
+            0x0017: t("INS", "Installer script", "⚙️"),
+            0x001E: t("PAS", "TML Pascal source code", "📄"),
+            0x0116: t("SCR", "ORCA/Disassembler script", "📄"),
+            0x0503: t("ASM", "SDE Assembler source code", "📄"),
+            0x0506: t("CMD", "SDE command script", "⚙️"),
+            0x0601: t("NFL", "Nifty List data", "📄"),
+            0x0719: t("PS", "PostScript file", "📄"),
+        ],
+        0xBB: [
+            0x7F01: t("GTV", "GTv videodisc serial driver", "💿"),
+            0x7F02: t("GTV", "GTv videodisc game port driver", "💿"),
+        ],
+        0xBC: [
+            0x4001: t("NFL", "Nifty List Module", "⚙️"),
+            0x4002: t("SI", "Super Info module", "⚙️"),
+            0x4004: t("TWL", "Twilight document", "⚙️"),
+            0x4007: t("HS", "HyperStudio New Button Action", "⚙️"),
+            0x4008: t("HS", "HyperStudio Screen Transition", "⚙️"),
+            0x4009: t("DGX", "DreamGrafix module", "⚙️"),
+            0x400A: t("HS", "HyperStudio Extra utility", "⚙️"),
+            0x400F: t("HP", "HardPressed compression module", "⚙️"),
+        ],
+        0xC0: [
+            0x0000: t("PNT", "Paintworks Packed picture", "🎨"),
+            0x0001: t("SHR", "Packed Super Hi-Res Image", "🖼️"),
+            0x0002: t("APF", "Apple Preferred Format picture", "🖼️"),
+            0x0003: t("PICT", "Packed QuickDraw II PICT file", "🖼️"),
+            0x8001: t("GTV", "GTv background image", "🖼️"),
+            0x8005: t("DGX", "DreamGrafix document", "🎨"),
+            0x8006: t("GIF", "GIF document", "🖼️"),
+        ],
+        0xC1: [
+            0x0000: t("SHR", "Super Hi-Res Screen image", "🖼️"),
+            0x0001: t("PICT", "QuickDraw PICT file", "🖼️"),
+            0x0002: t("SHR", "Super Hi-Res 3200 color image", "🖼️"),
+            0x8001: t("ALL", "Allison raw image doc", "🖼️"),
+            0x8002: t("THN", "ThunderScan image doc", "🖼️"),
+            0x8003: t("DGX", "DreamGrafix document", "🎨"),
+        ],
+        0xC5: [
+            0x8000: t("DP", "Draw Plus document", "🎨"),
+            0xC000: t("DYOH", "DYOH Architecture doc", "🏗️"),
+            0xC001: t("DYOH", "DYOH predrawn objects", "🏗️"),
+            0xC002: t("DYOH", "DYOH custom objects", "🏗️"),
+            0xC003: t("DYOH", "DYOH clipboard", "🏗️"),
+            0xC006: t("DYOH", "DYOH Landscape Document", "🏗️"),
+            0xC007: t("PYW", "PyWare Document", "🎨"),
+            0xC008: t("AN3", "Animasia 3-D Project", "🎬"),
+        ],
+        0xC8: [
+            0x0000: t("FON", "QuickDraw II Font", "🔤"),
+            0x0001: t("TTF", "TrueType font", "🔤"),
+        ],
+        0xD5: [
+            0x0000: t("MCS", "Music Construction Set song", "🎵"),
+            0x0001: t("MID", "MIDI Synth sequence", "🎵"),
+            0x0007: t("SS", "SoundSmith document", "🎵"),
+            0x0008: t("NTP", "NinjaTrackerPlus sequence", "🎵"),
+            0x8002: t("DT", "Diversi-Tune sequence", "🎵"),
+            0x8003: t("MTJ", "Master Tracks Jr. sequence", "🎵"),
+            0x8005: t("AK", "Arcade King Super music", "🎵"),
+        ],
+        0xD6: [
+            0x0000: t("MCS", "Music Construction Set instrument", "🎹"),
+            0x0001: t("MID", "MIDI Synth instrument", "🎹"),
+            0x8002: t("DT", "Diversi-Tune instrument", "🎹"),
+        ],
+        0xD7: [
+            0x0000: t("MID", "MIDI standard data", "🎵"),
+        ],
+        0xD8: [
+            0x0000: t("AIFF", "Audio IFF document", "🔊"),
+            0x0001: t("AIFC", "AIFF-C document", "🔊"),
+            0x0002: t("ASIF", "ASIF instrument", "🔊"),
+            0x0003: t("SND", "Sound resource file", "🔊"),
+            0x0004: t("MID", "MIDI Synth wave data", "🔊"),
+            0x0005: t("CDDA", "CD Digital Audio Track", "💿"),
+            0x0006: t("CDDD", "CD Digital Data Track", "💿"),
+            0x8001: t("HS", "HyperStudio sound", "🔊"),
+            0x8002: t("AK", "Arcade King Super sound", "🔊"),
+            0x8003: t("SO", "SoundOff! sound bank", "🔊"),
+        ],
+        0xDB: [
+            0x0001: t("DBM", "DB Master document", "🗄️"),
+        ],
+        0xE0: [
+            0x0000: t("ALU", "ALU library", "📦"),
+            0x0001: t("AS", "AppleSingle File", "📦"),
+            0x0002: t("AD", "AppleDouble Header File", "📦"),
+            0x0003: t("AD", "AppleDouble Data File", "📦"),
+            0x0005: t("DC", "DiskCopy disk image", "💾"),
+            0x8000: t("BNY", "Binary II File", "📦"),
+            0x8001: t("ACU", "AppleLink ACU document", "📦"),
+            0x8002: t("SHK", "ShrinkIt (NuFX) document", "📦"),
+            0x8004: t("DVX", "Davex archived volume", "📦"),
+            0x8006: t("EZB", "EZ Backup Saveset doc", "📦"),
+            0x8007: t("ELS", "ELS DOS 3.3 volume", "💾"),
+            0x8009: t("UW", "UtilityWorks document", "📦"),
+            0x800A: t("REP", "Replicator document", "📦"),
+            0x800D: t("HP", "HardPressed (data fork)", "📦"),
+            0x800E: t("HP", "HardPressed (rsrc fork)", "📦"),
+            0x800F: t("HP", "HardPressed (both forks)", "📦"),
+        ],
+        0xE2: [
+            0xFFFF: t("EM", "EasyMount document", "🌐"),
+        ],
+    ]
+
     // MARK: - Generic File Types
-    
-    private static func getGenericFileType(fileType: UInt8) -> ProDOSFileTypeInfo {
-        switch fileType {
-        case 0x00: return ProDOSFileTypeInfo(shortName: "NON", description: "Unknown", icon: "❓")
-        case 0x01: return ProDOSFileTypeInfo(shortName: "BAD", description: "Bad blocks", icon: "⚠️")
-        case 0x02: return ProDOSFileTypeInfo(shortName: "PCD", description: "Pascal code", icon: "📄")
-        case 0x03: return ProDOSFileTypeInfo(shortName: "PTX", description: "Pascal text", icon: "📄")
-        case 0x04: return ProDOSFileTypeInfo(shortName: "TXT", description: "ASCII text", icon: "📄")
-        case 0x05: return ProDOSFileTypeInfo(shortName: "PDA", description: "Pascal data", icon: "📄")
-        case 0x06: return ProDOSFileTypeInfo(shortName: "BIN", description: "Binary", icon: "🔢")
-        case 0x07: return ProDOSFileTypeInfo(shortName: "FNT", description: "Apple /// Font", icon: "🔤")
-        case 0x08: return ProDOSFileTypeInfo(shortName: "FOT", description: "Apple II Graphics", icon: "🖼️")
-        case 0x09: return ProDOSFileTypeInfo(shortName: "BA3", description: "Apple /// BASIC program", icon: "📄")
-        case 0x0A: return ProDOSFileTypeInfo(shortName: "DA3", description: "Apple /// BASIC data", icon: "📄")
-        case 0x0B: return ProDOSFileTypeInfo(shortName: "WPF", description: "Word Processor", icon: "📝")
-        case 0x0C: return ProDOSFileTypeInfo(shortName: "SOS", description: "Apple /// SOS System", icon: "⚙️")
-        case 0x0F: return ProDOSFileTypeInfo(shortName: "DIR", description: "Folder", icon: "📁")
-        case 0x10: return ProDOSFileTypeInfo(shortName: "RPD", description: "Apple /// RPS data", icon: "📄")
-        case 0x11: return ProDOSFileTypeInfo(shortName: "RPI", description: "Apple /// RPS index", icon: "📄")
-        case 0x12: return ProDOSFileTypeInfo(shortName: "AFD", description: "Apple /// AppleFile discard", icon: "📄")
-        case 0x13: return ProDOSFileTypeInfo(shortName: "AFM", description: "Apple /// AppleFile model", icon: "📄")
-        case 0x14: return ProDOSFileTypeInfo(shortName: "AFR", description: "Apple /// AppleFile report", icon: "📄")
-        case 0x15: return ProDOSFileTypeInfo(shortName: "SCL", description: "Apple /// screen library", icon: "📄")
-        case 0x16: return ProDOSFileTypeInfo(shortName: "PFS", description: "PFS document", icon: "📄")
-        case 0x19: return ProDOSFileTypeInfo(shortName: "ADB", description: "AppleWorks Data Base", icon: "🗄️")
-        case 0x1A: return ProDOSFileTypeInfo(shortName: "AWP", description: "AppleWorks Word Processor", icon: "📝")
-        case 0x1B: return ProDOSFileTypeInfo(shortName: "ASP", description: "AppleWorks Spreadsheet", icon: "📊")
-        case 0x20: return ProDOSFileTypeInfo(shortName: "TDM", description: "Desktop Manager document", icon: "📄")
-        case 0x21: return ProDOSFileTypeInfo(shortName: "IPS", description: "Instant Pascal source", icon: "📄")
-        case 0x22: return ProDOSFileTypeInfo(shortName: "UPV", description: "UCSD Pascal Volume", icon: "💾")
-        case 0x29: return ProDOSFileTypeInfo(shortName: "DIC", description: "Apple /// SOS Dictionary", icon: "📕")
-        case 0x2A: return ProDOSFileTypeInfo(shortName: "8SC", description: "Apple II Source Code", icon: "📄")
-        case 0x2B: return ProDOSFileTypeInfo(shortName: "8OB", description: "Apple II Object Code", icon: "⚙️")
-        case 0x2C: return ProDOSFileTypeInfo(shortName: "8IC", description: "Apple II Interpreted Code", icon: "⚙️")
-        case 0x2D: return ProDOSFileTypeInfo(shortName: "8LD", description: "Apple II Language Data", icon: "📄")
-        case 0x2E: return ProDOSFileTypeInfo(shortName: "P8C", description: "ProDOS 8 code module", icon: "⚙️")
-        case 0x40: return ProDOSFileTypeInfo(shortName: "DIC", description: "Dictionary file", icon: "📕")
-        case 0x41: return ProDOSFileTypeInfo(shortName: "OCR", description: "OCR data", icon: "🔤")
-        case 0x42: return ProDOSFileTypeInfo(shortName: "FTD", description: "File Type Descriptors", icon: "📄")
-        case 0x43: return ProDOSFileTypeInfo(shortName: "PRD", description: "Peripheral data", icon: "⚙️")
-        case 0x50: return ProDOSFileTypeInfo(shortName: "GWP", description: "Apple IIgs Word Processor", icon: "📝")
-        case 0x51: return ProDOSFileTypeInfo(shortName: "GSS", description: "Apple IIgs Spreadsheet", icon: "📊")
-        case 0x52: return ProDOSFileTypeInfo(shortName: "GDB", description: "Apple IIgs Data Base", icon: "🗄️")
-        case 0x53: return ProDOSFileTypeInfo(shortName: "DRW", description: "Drawing", icon: "🎨")
-        case 0x54: return ProDOSFileTypeInfo(shortName: "GDP", description: "Desktop Publishing", icon: "📰")
-        case 0x55: return ProDOSFileTypeInfo(shortName: "HMD", description: "Hypermedia", icon: "🗂️")
-        case 0x56: return ProDOSFileTypeInfo(shortName: "EDU", description: "Educational Data", icon: "📚")
-        case 0x57: return ProDOSFileTypeInfo(shortName: "STN", description: "Stationery", icon: "📄")
-        case 0x58: return ProDOSFileTypeInfo(shortName: "HLP", description: "Help File", icon: "❓")
-        case 0x59: return ProDOSFileTypeInfo(shortName: "COM", description: "Communications File", icon: "📡")
-        case 0x5A: return ProDOSFileTypeInfo(shortName: "CFG", description: "Configuration file", icon: "⚙️")
-        case 0x5B: return ProDOSFileTypeInfo(shortName: "ANM", description: "Animation file", icon: "🎬")
-        case 0x5C: return ProDOSFileTypeInfo(shortName: "MUM", description: "Multimedia document", icon: "🎭")
-        case 0x5D: return ProDOSFileTypeInfo(shortName: "ENT", description: "Game/Entertainment", icon: "🎮")
-        case 0x5E: return ProDOSFileTypeInfo(shortName: "DVU", description: "Development utility", icon: "🔧")
-        case 0x5F: return ProDOSFileTypeInfo(shortName: "FIN", description: "Financial document", icon: "💰")
-        case 0x6B: return ProDOSFileTypeInfo(shortName: "BIO", description: "PC Transporter BIOS", icon: "💿")
-        case 0x6D: return ProDOSFileTypeInfo(shortName: "TDR", description: "PC Transporter driver", icon: "💿")
-        case 0x6E: return ProDOSFileTypeInfo(shortName: "PRE", description: "PC Transporter pre-boot", icon: "💿")
-        case 0x6F: return ProDOSFileTypeInfo(shortName: "HDV", description: "PC Transporter volume", icon: "💿")
-        case 0xA0: return ProDOSFileTypeInfo(shortName: "WP", description: "WordPerfect document", icon: "📝")
-        case 0xAB: return ProDOSFileTypeInfo(shortName: "GSB", description: "Apple IIgs BASIC program", icon: "📄")
-        case 0xAC: return ProDOSFileTypeInfo(shortName: "TDF", description: "Apple IIgs BASIC TDF", icon: "📄")
-        case 0xAD: return ProDOSFileTypeInfo(shortName: "BDF", description: "Apple IIgs BASIC data", icon: "📄")
-        case 0xB0: return ProDOSFileTypeInfo(shortName: "SRC", description: "Apple IIgs source code", icon: "📄")
-        case 0xB1: return ProDOSFileTypeInfo(shortName: "OBJ", description: "Apple IIgs object code", icon: "⚙️")
-        case 0xB2: return ProDOSFileTypeInfo(shortName: "LIB", description: "Apple IIgs Library file", icon: "📚")
-        case 0xB3: return ProDOSFileTypeInfo(shortName: "S16", description: "GS/OS application", icon: "🖥️")
-        case 0xB4: return ProDOSFileTypeInfo(shortName: "RTL", description: "GS/OS Run-Time Library", icon: "📚")
-        case 0xB5: return ProDOSFileTypeInfo(shortName: "EXE", description: "GS/OS Shell application", icon: "⚙️")
-        case 0xB6: return ProDOSFileTypeInfo(shortName: "PIF", description: "Permanent init file", icon: "⚙️")
-        case 0xB7: return ProDOSFileTypeInfo(shortName: "TIF", description: "Temporary init file", icon: "⚙️")
-        case 0xB8: return ProDOSFileTypeInfo(shortName: "NDA", description: "New desk accessory", icon: "🔧")
-        case 0xB9: return ProDOSFileTypeInfo(shortName: "CDA", description: "Classic desk accessory", icon: "🔧")
-        case 0xBA: return ProDOSFileTypeInfo(shortName: "TOL", description: "Tool", icon: "🔧")
-        case 0xBB: return ProDOSFileTypeInfo(shortName: "DVR", description: "Device Driver", icon: "⚙️")
-        case 0xBC: return ProDOSFileTypeInfo(shortName: "LDF", description: "Load file (generic)", icon: "⚙️")
-        case 0xBD: return ProDOSFileTypeInfo(shortName: "FST", description: "File System Translator", icon: "⚙️")
-        case 0xBF: return ProDOSFileTypeInfo(shortName: "DOC", description: "GS/OS document", icon: "📄")
-        case 0xC0: return ProDOSFileTypeInfo(shortName: "PNT", description: "Packed Super Hi-Res", icon: "🎨")
-        case 0xC1: return ProDOSFileTypeInfo(shortName: "PIC", description: "Super Hi-Res picture", icon: "🖼️")
-        case 0xC2: return ProDOSFileTypeInfo(shortName: "ANI", description: "Paintworks animation", icon: "🎬")
-        case 0xC3: return ProDOSFileTypeInfo(shortName: "PAL", description: "Paintworks palette", icon: "🎨")
-        case 0xC5: return ProDOSFileTypeInfo(shortName: "OOG", description: "Object-oriented graphics", icon: "🎨")
-        case 0xC6: return ProDOSFileTypeInfo(shortName: "SCR", description: "Script", icon: "📄")
-        case 0xC7: return ProDOSFileTypeInfo(shortName: "CDV", description: "Control Panel document", icon: "⚙️")
-        case 0xC8: return ProDOSFileTypeInfo(shortName: "FON", description: "Font", icon: "🔤")
-        case 0xC9: return ProDOSFileTypeInfo(shortName: "FND", description: "Finder data", icon: "🗂️")
-        case 0xCA: return ProDOSFileTypeInfo(shortName: "ICN", description: "Icons", icon: "🖼️")
-        case 0xD5: return ProDOSFileTypeInfo(shortName: "MUS", description: "Music sequence", icon: "🎵")
-        case 0xD6: return ProDOSFileTypeInfo(shortName: "INS", description: "Instrument", icon: "🎹")
-        case 0xD7: return ProDOSFileTypeInfo(shortName: "MDI", description: "MIDI data", icon: "🎵")
-        case 0xD8: return ProDOSFileTypeInfo(shortName: "SND", description: "Sampled sound", icon: "🔊")
-        case 0xDB: return ProDOSFileTypeInfo(shortName: "DBM", description: "DB Master document", icon: "🗄️")
-        case 0xE0: return ProDOSFileTypeInfo(shortName: "LBR", description: "Archival library", icon: "📦")
-        case 0xE2: return ProDOSFileTypeInfo(shortName: "ATK", description: "AppleTalk data", icon: "🌐")
-        case 0xEE: return ProDOSFileTypeInfo(shortName: "R16", description: "EDASM 816 relocatable", icon: "⚙️")
-        case 0xEF: return ProDOSFileTypeInfo(shortName: "PAS", description: "Pascal area", icon: "📄")
-        case 0xF0: return ProDOSFileTypeInfo(shortName: "CMD", description: "BASIC command", icon: "⚙️")
-        case 0xF1: return ProDOSFileTypeInfo(shortName: "U01", description: "User #1", icon: "📄")
-        case 0xF2: return ProDOSFileTypeInfo(shortName: "U02", description: "User #2", icon: "📄")
-        case 0xF3: return ProDOSFileTypeInfo(shortName: "U03", description: "User #3", icon: "📄")
-        case 0xF4: return ProDOSFileTypeInfo(shortName: "U04", description: "User #4", icon: "📄")
-        case 0xF5: return ProDOSFileTypeInfo(shortName: "U05", description: "User #5", icon: "📄")
-        case 0xF6: return ProDOSFileTypeInfo(shortName: "U06", description: "User #6", icon: "📄")
-        case 0xF7: return ProDOSFileTypeInfo(shortName: "U07", description: "User #7", icon: "📄")
-        case 0xF8: return ProDOSFileTypeInfo(shortName: "U08", description: "User #8", icon: "📄")
-        case 0xF9: return ProDOSFileTypeInfo(shortName: "OS", description: "GS/OS System file", icon: "⚙️")
-        case 0xFA: return ProDOSFileTypeInfo(shortName: "INT", description: "Integer BASIC program", icon: "📄")
-        case 0xFB: return ProDOSFileTypeInfo(shortName: "IVR", description: "Integer BASIC variables", icon: "📄")
-        case 0xFC: return ProDOSFileTypeInfo(shortName: "BAS", description: "AppleSoft BASIC program", icon: "📄")
-        case 0xFD: return ProDOSFileTypeInfo(shortName: "VAR", description: "AppleSoft BASIC variables", icon: "📄")
-        case 0xFE: return ProDOSFileTypeInfo(shortName: "REL", description: "Relocatable code", icon: "⚙️")
-        case 0xFF: return ProDOSFileTypeInfo(shortName: "SYS", description: "ProDOS 8 application", icon: "⚙️")
-            
-        default:
-            return ProDOSFileTypeInfo(shortName: String(format: "$%02X", fileType), description: "Unknown Type", icon: "❓")
-        }
-    }
+
+    private static let genericTypes: [UInt8: ProDOSFileTypeInfo] = [
+        0x00: t("NON", "Unknown", "❓"),
+        0x01: t("BAD", "Bad blocks", "⚠️"),
+        0x02: t("PCD", "Pascal code", "📄"),
+        0x03: t("PTX", "Pascal text", "📄"),
+        0x04: t("TXT", "ASCII text", "📄"),
+        0x05: t("PDA", "Pascal data", "📄"),
+        0x06: t("BIN", "Binary", "🔢"),
+        0x07: t("FNT", "Apple /// Font", "🔤"),
+        0x08: t("FOT", "Apple II Graphics", "🖼️"),
+        0x09: t("BA3", "Apple /// BASIC program", "📄"),
+        0x0A: t("DA3", "Apple /// BASIC data", "📄"),
+        0x0B: t("WPF", "Word Processor", "📝"),
+        0x0C: t("SOS", "Apple /// SOS System", "⚙️"),
+        0x0F: t("DIR", "Folder", "📁"),
+        0x10: t("RPD", "Apple /// RPS data", "📄"),
+        0x11: t("RPI", "Apple /// RPS index", "📄"),
+        0x12: t("AFD", "Apple /// AppleFile discard", "📄"),
+        0x13: t("AFM", "Apple /// AppleFile model", "📄"),
+        0x14: t("AFR", "Apple /// AppleFile report", "📄"),
+        0x15: t("SCL", "Apple /// screen library", "📄"),
+        0x16: t("PFS", "PFS document", "📄"),
+        0x19: t("ADB", "AppleWorks Data Base", "🗄️"),
+        0x1A: t("AWP", "AppleWorks Word Processor", "📝"),
+        0x1B: t("ASP", "AppleWorks Spreadsheet", "📊"),
+        0x20: t("TDM", "Desktop Manager document", "📄"),
+        0x21: t("IPS", "Instant Pascal source", "📄"),
+        0x22: t("UPV", "UCSD Pascal Volume", "💾"),
+        0x29: t("DIC", "Apple /// SOS Dictionary", "📕"),
+        0x2A: t("8SC", "Apple II Source Code", "📄"),
+        0x2B: t("8OB", "Apple II Object Code", "⚙️"),
+        0x2C: t("8IC", "Apple II Interpreted Code", "⚙️"),
+        0x2D: t("8LD", "Apple II Language Data", "📄"),
+        0x2E: t("P8C", "ProDOS 8 code module", "⚙️"),
+        0x40: t("DIC", "Dictionary file", "📕"),
+        0x41: t("OCR", "OCR data", "🔤"),
+        0x42: t("FTD", "File Type Descriptors", "📄"),
+        0x43: t("PRD", "Peripheral data", "⚙️"),
+        0x50: t("GWP", "Apple IIgs Word Processor", "📝"),
+        0x51: t("GSS", "Apple IIgs Spreadsheet", "📊"),
+        0x52: t("GDB", "Apple IIgs Data Base", "🗄️"),
+        0x53: t("DRW", "Drawing", "🎨"),
+        0x54: t("GDP", "Desktop Publishing", "📰"),
+        0x55: t("HMD", "Hypermedia", "🗂️"),
+        0x56: t("EDU", "Educational Data", "📚"),
+        0x57: t("STN", "Stationery", "📄"),
+        0x58: t("HLP", "Help File", "❓"),
+        0x59: t("COM", "Communications File", "📡"),
+        0x5A: t("CFG", "Configuration file", "⚙️"),
+        0x5B: t("ANM", "Animation file", "🎬"),
+        0x5C: t("MUM", "Multimedia document", "🎭"),
+        0x5D: t("ENT", "Game/Entertainment", "🎮"),
+        0x5E: t("DVU", "Development utility", "🔧"),
+        0x5F: t("FIN", "Financial document", "💰"),
+        0x6B: t("BIO", "PC Transporter BIOS", "💿"),
+        0x6D: t("TDR", "PC Transporter driver", "💿"),
+        0x6E: t("PRE", "PC Transporter pre-boot", "💿"),
+        0x6F: t("HDV", "PC Transporter volume", "💿"),
+        0xA0: t("WP", "WordPerfect document", "📝"),
+        0xAB: t("GSB", "Apple IIgs BASIC program", "📄"),
+        0xAC: t("TDF", "Apple IIgs BASIC TDF", "📄"),
+        0xAD: t("BDF", "Apple IIgs BASIC data", "📄"),
+        0xB0: t("SRC", "Apple IIgs source code", "📄"),
+        0xB1: t("OBJ", "Apple IIgs object code", "⚙️"),
+        0xB2: t("LIB", "Apple IIgs Library file", "📚"),
+        0xB3: t("S16", "GS/OS application", "🖥️"),
+        0xB4: t("RTL", "GS/OS Run-Time Library", "📚"),
+        0xB5: t("EXE", "GS/OS Shell application", "⚙️"),
+        0xB6: t("PIF", "Permanent init file", "⚙️"),
+        0xB7: t("TIF", "Temporary init file", "⚙️"),
+        0xB8: t("NDA", "New desk accessory", "🔧"),
+        0xB9: t("CDA", "Classic desk accessory", "🔧"),
+        0xBA: t("TOL", "Tool", "🔧"),
+        0xBB: t("DVR", "Device Driver", "⚙️"),
+        0xBC: t("LDF", "Load file (generic)", "⚙️"),
+        0xBD: t("FST", "File System Translator", "⚙️"),
+        0xBF: t("DOC", "GS/OS document", "📄"),
+        0xC0: t("PNT", "Packed Super Hi-Res", "🎨"),
+        0xC1: t("PIC", "Super Hi-Res picture", "🖼️"),
+        0xC2: t("ANI", "Paintworks animation", "🎬"),
+        0xC3: t("PAL", "Paintworks palette", "🎨"),
+        0xC5: t("OOG", "Object-oriented graphics", "🎨"),
+        0xC6: t("SCR", "Script", "📄"),
+        0xC7: t("CDV", "Control Panel document", "⚙️"),
+        0xC8: t("FON", "Font", "🔤"),
+        0xC9: t("FND", "Finder data", "🗂️"),
+        0xCA: t("ICN", "Icons", "🖼️"),
+        0xD5: t("MUS", "Music sequence", "🎵"),
+        0xD6: t("INS", "Instrument", "🎹"),
+        0xD7: t("MDI", "MIDI data", "🎵"),
+        0xD8: t("SND", "Sampled sound", "🔊"),
+        0xDB: t("DBM", "DB Master document", "🗄️"),
+        0xE0: t("LBR", "Archival library", "📦"),
+        0xE2: t("ATK", "AppleTalk data", "🌐"),
+        0xEE: t("R16", "EDASM 816 relocatable", "⚙️"),
+        0xEF: t("PAS", "Pascal area", "📄"),
+        0xF0: t("CMD", "BASIC command", "⚙️"),
+        0xF1: t("U01", "User #1", "📄"),
+        0xF2: t("U02", "User #2", "📄"),
+        0xF3: t("U03", "User #3", "📄"),
+        0xF4: t("U04", "User #4", "📄"),
+        0xF5: t("U05", "User #5", "📄"),
+        0xF6: t("U06", "User #6", "📄"),
+        0xF7: t("U07", "User #7", "📄"),
+        0xF8: t("U08", "User #8", "📄"),
+        0xF9: t("OS", "GS/OS System file", "⚙️"),
+        0xFA: t("INT", "Integer BASIC program", "📄"),
+        0xFB: t("IVR", "Integer BASIC variables", "📄"),
+        0xFC: t("BAS", "AppleSoft BASIC program", "📄"),
+        0xFD: t("VAR", "AppleSoft BASIC variables", "📄"),
+        0xFE: t("REL", "Relocatable code", "⚙️"),
+        0xFF: t("SYS", "ProDOS 8 application", "⚙️"),
+    ]
 }

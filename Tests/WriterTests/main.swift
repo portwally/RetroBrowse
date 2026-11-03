@@ -839,6 +839,20 @@ do {
     check(errors.isEmpty, "no errors while navigating, got \(errors)")
 }
 
+// MARK: - File type database and the Help table
+
+do {
+    let rows = ProDOSFileTypeInfo.allEntries
+    check(rows.count == 277 && Set(rows.map { $0.id }).count == rows.count, "the database lists 277 distinct type and aux entries")
+    check(ProDOSFileTypeInfo.getFileTypeInfo(fileType: 0xD5, auxType: 0x0007).shortName == "SS"
+          && ProDOSFileTypeInfo.getFileTypeInfo(fileType: 0xD5, auxType: 0x1234).shortName == "MUS"
+          && ProDOSFileTypeInfo.getFileTypeInfo(fileType: 0x17, auxType: 0).description == "Unknown Type",
+          "lookups give the specific, then the general, then the unknown entry")
+    check(InspectorSupport.viewer(fileType: 0xD5, auxType: 0x0007) != nil && InspectorSupport.viewer(fileType: 0xD5, auxType: 0x0001) == nil,
+          "SoundSmith songs are readable, MIDI Synth songs are not")
+    check(rows.filter { InspectorSupport.viewer(fileType: $0.fileType, auxType: $0.auxType) != nil }.count > 40, "the table marks the readable types")
+}
+
 // MARK: - .img images: raw and DiskCopy 4.2
 
 do {

@@ -287,15 +287,10 @@ struct FileTypesHelpView: View {
             Text("ProDOS files have a file type (1 byte) and auxiliary type (2 bytes) that identify the file format.")
                 .helpBody()
 
-            HelpSection("Common File Types") {
-                FileTypeRow(type: "$04", name: "TXT", desc: "Text file")
-                FileTypeRow(type: "$06", name: "BIN", desc: "Binary file (aux = load address)")
-                FileTypeRow(type: "$0F", name: "DIR", desc: "Directory")
-                FileTypeRow(type: "$19", name: "ADB", desc: "AppleWorks Database")
-                FileTypeRow(type: "$1A", name: "AWP", desc: "AppleWorks Word Processor")
-                FileTypeRow(type: "$1B", name: "ASP", desc: "AppleWorks Spreadsheet")
-                FileTypeRow(type: "$FC", name: "BAS", desc: "Applesoft BASIC")
-                FileTypeRow(type: "$FF", name: "SYS", desc: "System file")
+            HelpSection("All Known File Types") {
+                Text("Every ProDOS and GS/OS file type RetroBrowse knows, with its specific aux types. A checkmark means the inspector can show the file's contents; every file can also be viewed as hex and its details under Info. Hover over a checkmark to see how it is shown.")
+                    .helpBody()
+                FileTypeTable()
             }
 
             HelpSection("Changing File Types") {
@@ -307,6 +302,77 @@ struct FileTypesHelpView: View {
 
             HelpNote("The aux type meaning depends on the file type. For BIN files, it's the load address. For text files, it's usually 0.")
         }
+    }
+}
+
+// MARK: - File Type Table
+
+/// The file type database with a column showing what the inspector can read
+struct FileTypeTable: View {
+    @State private var filter = ""
+
+    private var rows: [ProDOSFileTypeInfo.Entry] {
+        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return ProDOSFileTypeInfo.allEntries }
+        return ProDOSFileTypeInfo.allEntries.filter { row in
+            let type = String(format: "$%02x", row.fileType)
+            let aux = row.auxType.map { String(format: "$%04x", $0) } ?? ""
+            return [type, aux, row.info.shortName.lowercased(), row.info.description.lowercased()]
+                .contains { $0.contains(query) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Filter by type, aux type or name", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 300)
+
+            VStack(spacing: 0) {
+                row(type: "Type", aux: "Aux", name: "Name", description: "Description", viewer: nil, header: true)
+                Divider()
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, entry in
+                        let viewer = InspectorSupport.viewer(fileType: entry.fileType, auxType: entry.auxType)
+                        row(type: String(format: "$%02X", entry.fileType),
+                            aux: entry.auxType.map { String(format: "$%04X", $0) } ?? "any",
+                            name: entry.info.shortName,
+                            description: entry.info.description,
+                            viewer: viewer,
+                            header: false)
+                            .background(index % 2 == 1 ? Color.secondary.opacity(0.08) : Color.clear)
+                    }
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+
+            Text("\(ProDOSFileTypeInfo.allEntries.count) entries, \(ProDOSFileTypeInfo.allEntries.filter { InspectorSupport.viewer(fileType: $0.fileType, auxType: $0.auxType) != nil }.count) readable")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func row(type: String, aux: String, name: String, description: String, viewer: String?, header: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(type).frame(width: 40, alignment: .leading)
+            Text(aux).frame(width: 52, alignment: .leading)
+                .foregroundColor(!header && aux == "any" ? .secondary : .primary)
+            Text(name).frame(width: 48, alignment: .leading)
+            Text(description).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1)
+            Group {
+                if header {
+                    Text("Read")
+                } else if let viewer {
+                    Image(systemName: "checkmark").foregroundColor(.green).help(viewer)
+                } else {
+                    Text("")
+                }
+            }
+            .frame(width: 36)
+        }
+        .font(header ? .system(size: 11, weight: .semibold) : .system(size: 11, design: .monospaced))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
     }
 }
 

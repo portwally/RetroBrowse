@@ -350,3 +350,7 @@ this has been built or run yet.
 - [x] With the inspector open, Up/Down move to the file above/below (folders are skipped) and the inspector shows it
 - [x] Folder open/closed state moved into the view model: Expand/Collapse All simpler, folders stay open after a reload
 - Checked in the app: SHOT.SND -> CARD.SOUND -> AAAAH in the open inspector; 45 rows down the list scrolls along. 320/320 tests.
+
+## File type table in Help (2026-11-03)
+- [x] ProDOSFileTypes converted from nested switches to tables (same answer for all 16.7M type/aux pairs, checked)
+- [x] Help > File Types: all 277 entries with a Read checkmark (InspectorSupport mirrors the inspector and decoders), filter field

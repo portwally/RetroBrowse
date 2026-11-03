@@ -11,6 +11,7 @@ swiftc -swift-version 5 -Onone -o "$OUT" \
     ProBrowse/DiskImageParser.swift \
     ProBrowse/DiskCatalogModels.swift \
     ProBrowse/ProDOSFileTypes.swift \
+    ProBrowse/InspectorSupport.swift \
     ProBrowse/GzipZipArchive.swift \
     ProBrowse/NuFXArchive.swift \
     ProBrowse/BinaryIIArchive.swift \
