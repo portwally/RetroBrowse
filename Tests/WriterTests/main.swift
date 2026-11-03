@@ -702,5 +702,143 @@ do {
     check(errors.count == 1 && (try! Data(contentsOf: dosURL)) == before, "New Folder is refused on a DOS 3.3 disk")
 }
 
+// MARK: - Apple IIgs sounds
+
+do {
+    func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF)] }
+    func le32(_ v: Int) -> [UInt8] { le16(v & 0xFFFF) + le16(v >> 16) }
+    func be32(_ v: Int) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+
+    // 8-bit DOC samples: $80 is silence and $00 ends the sound
+    let pcm = AppleIIgsSoundDecoder.pcm(fromDOC: Data([0x80, 0xFF, 0x01, 0x00, 0x80]))
+    check(pcm.count == 3 && pcm[0] == 0 && pcm[1] > 0.99 && pcm[2] < -0.99, "DOC samples convert and stop at $00")
+
+    // A resource fork with one rSoundSample ($8024) and its rResName entry
+    let sound: [UInt8] = le16(0) + le16(1) + le16(0) + le16(0) + le16(11025) + [0x80, 0xC0, 0x40, 0x80]
+    let names: [UInt8] = le16(1) + le32(1) + le32(0x0042) + [4] + Array("Beep".utf8)
+    let header = 140
+    let soundAt = header, namesAt = soundAt + sound.count, mapAt = namesAt + names.count
+    let toIndex = 0x20 + 8
+    var map: [UInt8] = le32(0) + le16(0) + le32(mapAt) + le32(0) + le16(toIndex) + le16(0) + le16(0) + le32(3) + le32(2) + le16(1) + le16(1)
+    map += le32(0) + le32(0)  // one free block
+    map += le16(0x8024) + le32(0x0042) + le32(soundAt) + le16(0) + le32(sound.count) + le32(0)
+    map += le16(0x8014) + le32(0x0001_8024) + le32(namesAt) + le16(0) + le32(names.count) + le32(0)
+    map += [UInt8](repeating: 0, count: 20)
+    var fork: [UInt8] = le32(0) + le32(mapAt) + le32(map.count) + [UInt8](repeating: 0, count: 128)
+    fork += sound + names + map
+    if case .samples(let s) = AppleIIgsSoundDecoder.decode(fileType: 0xD8, auxType: 3, data: Data(), resourceFork: Data(fork)) {
+        check(s.count == 1 && s[0].name == "Beep" && s[0].sampleRate == 11025 && s[0].samples.count == 4,
+              "an rSound resource decodes with its name and rate")
+    } else {
+        check(false, "an rSound resource decodes")
+    }
+
+    // HyperStudio "SSHS": rate code 216 is (216 + 40) * 51.40625 = 13160 Hz
+    var hs: [UInt8] = Array("SSHS".utf8) + le32(56) + Array("RWP SSDK".utf8)
+    hs += le16(0) + le16(0) + le16(0) + le16(0) + le16(1) + le16(0) + le16(216)
+    hs += [UInt8](repeating: 0, count: 64 - hs.count) + [UInt8](repeating: 0x90, count: 256)
+    if case .samples(let s) = AppleIIgsSoundDecoder.decode(fileType: 0xD8, auxType: 0x8001, data: Data(hs), resourceFork: nil) {
+        check(s.count == 1 && Int(s[0].sampleRate) == 13160 && s[0].samples.count == 256, "a HyperStudio sound decodes at its rate")
+    } else {
+        check(false, "a HyperStudio sound decodes")
+    }
+
+    // ASIF: one WAVE chunk with a 3-byte wave
+    var wave: [UInt8] = [4] + Array("TEST".utf8) + le16(2) + le16(1)
+    wave += le16(0) + le16(1) + le32(0) + le32(22050 << 16) + [0x70, 0x90, 0xA0]
+    let asif: [UInt8] = Array("FORM".utf8) + be32(4 + 8 + wave.count) + Array("ASIF".utf8) + Array("WAVE".utf8) + be32(wave.count) + wave
+    check(AppleIIgsSoundDecoder.isAudio(fileType: 0x06, auxType: 0, data: Data(asif)), "an ASIF file is recognised by its contents")
+    if case .samples(let s) = AppleIIgsSoundDecoder.decode(fileType: 0xD8, auxType: 2, data: Data(asif), resourceFork: nil) {
+        check(s.count == 1 && s[0].name == "TEST" && s[0].sampleRate == 22050 && s[0].samples.count == 3, "an ASIF wave decodes")
+    } else {
+        check(false, "an ASIF wave decodes")
+    }
+
+    // Damaged input does not crash
+    for n in [0, 5, 13, 70, 150] {
+        _ = AppleIIgsSoundDecoder.decode(fileType: 0xD8, auxType: 3, data: Data(asif.prefix(n)), resourceFork: Data(fork.prefix(n)))
+        _ = AppleIIgsSoundDecoder.decode(fileType: 0xD8, auxType: 0x8001, data: Data(hs.prefix(n)), resourceFork: nil)
+    }
+    check(true, "truncated sound files do not crash")
+}
+
+// MARK: - Tracker modules
+
+do {
+    // One 4-channel pattern: sample 1 at C-2 on row 0, pattern break on row 15
+    var mod = [UInt8](repeating: 0, count: 1084)
+    for (i, b) in "TEST SONG".utf8.enumerated() { mod[i] = b }
+    let sampleWords = 32
+    mod[20 + 22] = 0; mod[20 + 23] = UInt8(sampleWords)   // length in words
+    mod[20 + 25] = 64                                      // volume
+    mod[20 + 28] = 0; mod[20 + 29] = UInt8(sampleWords)   // loop the whole sample
+    mod[950] = 1                                           // one position
+    for (i, b) in "M.K.".utf8.enumerated() { mod[1080 + i] = b }
+    var pattern = [UInt8](repeating: 0, count: 1024)
+    pattern[0] = 0x01; pattern[1] = 0xAC; pattern[2] = 0x10  // sample 1, period 428 (C-2)
+    pattern[15 * 16 + 2] = 0x0D                             // D00 on row 15
+    mod += pattern
+    mod += (0..<(sampleWords * 2)).map { $0 < sampleWords ? 0x40 : 0xC0 }  // square wave
+
+    check(MODRenderer.isModule(Data(mod)), "a module is recognised by its M.K. tag")
+    check(AppleIIgsSoundDecoder.isAudio(fileType: 0x06, auxType: 0, data: Data(mod)), "a module saved as BIN opens in the player")
+    if let m = MODRenderer.parse(Data(mod)) {
+        let (left, right) = MODRenderer.render(m)
+        // 16 rows * 6 ticks * (44100 * 2.5 / 125) frames
+        check(left.count == 16 * 6 * 882 && right.count == left.count, "the pattern break ends the song after 16 rows, got \(left.count)")
+        check(left.contains { abs($0) > 0.1 }, "the note is audible")
+        check(m.title == "TEST SONG" && m.channels == 4, "title and channel count are read")
+    } else {
+        check(false, "a module parses")
+    }
+    _ = MODRenderer.parse(Data(mod.prefix(1100)))
+    check(MODRenderer.parse(Data(mod.prefix(1500))) == nil, "a truncated module is rejected")
+}
+
+// MARK: - SoundSmith songs
+
+do {
+    // Wave bank: one instrument playing a 256-byte square wave from DOC page 1
+    var bank = [UInt8](repeating: 0x80, count: 0x10022 + 0x5C + 0x3C + 32)
+    bank[0] = 1; bank[1] = 0
+    for i in 0..<256 { bank[2 + 0x100 + i] = i < 128 ? 0xC0 : 0x40 }
+    let record: [UInt8] = [0x7F, 0x01, 0x00, 0x00, 0, 0, 0x7F, 0x01, 0x00, 0x00, 0, 0]
+    for (i, b) in record.enumerated() { bank[0x10022 + i] = b }
+    for i in 0..<32 { bank[0x10022 + 0x5C + 0x3C + i] = 0 }
+
+    // Song: one 64-row block, middle C on voice 1 with instrument 1
+    let block = 64 * 14
+    var song = [UInt8](repeating: 0, count: 0x258 + block * 3 + 32)
+    for (i, b) in "SONGOK".utf8.enumerated() { song[i] = b }
+    song[6] = UInt8(block & 0xFF); song[7] = UInt8(block >> 8)
+    song[8] = 6                                   // tempo
+    song[0x2C] = 0xFE                             // instrument 1 volume
+    song[0x1D6] = 1                               // one block in the song
+    song[0x258] = 60                              // note
+    song[0x258 + block] = 0x10                    // instrument 1, no effect
+
+    var folder = ["TUNE.W": Data(bank), "README": Data("hello".utf8)]
+    check(SoundSmithRenderer.isWavebank(Data(bank)) && !SoundSmithRenderer.isWavebank(Data(song)), "wave banks are recognised by their contents")
+    check(SoundSmithRenderer.findWavebank(forSong: "TUNE", in: folder)?.name == "TUNE.W", "the wave bank named after the song is found")
+    folder["OTHER.D"] = Data(bank)
+    check(SoundSmithRenderer.findWavebank(forSong: "TUNE", in: folder)?.name == "TUNE.W", "the closest wave bank name wins")
+    if case .samples(let s) = AppleIIgsSoundDecoder.decode(fileType: 0xD5, auxType: 7, data: Data(song), resourceFork: nil,
+                                                           name: "TUNE", companions: folder) {
+        // 64 rows of 6 ticks at about 50 Hz is about 7.6 seconds
+        check(s[0].duration > 7.0 && s[0].duration < 8.2, "a one-block song lasts about 7.6 s, got \(s[0].duration)")
+        check(s[0].samples.contains { abs($0) > 0.01 } || s[0].right!.contains { abs($0) > 0.01 }, "the note is audible")
+    } else {
+        check(false, "a SoundSmith song with its wave bank decodes")
+    }
+    if case .unsupported = AppleIIgsSoundDecoder.decode(fileType: 0xD5, auxType: 7, data: Data(song), resourceFork: nil,
+                                                       name: "TUNE", companions: [:]) {
+        check(true, "a song without a wave bank explains what is missing")
+    } else {
+        check(false, "a song without a wave bank explains what is missing")
+    }
+    _ = SoundSmithRenderer.parseSong(Data(song.prefix(700)))
+    _ = SoundSmithRenderer.parseWavebank(Data(bank.prefix(0x10030)))
+}
+
 print("\(checkCount - failureCount) of \(checkCount) checks passed")
 exit(failureCount == 0 ? 0 : 1)

@@ -17,5 +17,8 @@ swiftc -swift-version 5 -Onone -o "$OUT" \
     ProBrowse/UCSDPascalParser.swift \
     ProBrowse/FocusManager.swift \
     ProBrowse/DiskPaneViewModel.swift \
+    ProBrowse/AppleIIgsSoundDecoder.swift \
+    ProBrowse/MODRenderer.swift \
+    ProBrowse/SoundSmithRenderer.swift \
     Tests/WriterTests/main.swift
 "$OUT" "$@"

@@ -261,3 +261,51 @@ The main scene was a window group whose "New Window" command had been replaced, 
 Checked in the running sandboxed build through the menus: closing the main window and reopening it from Window > RetroBrowse; and quitting with only Help open, after which the next launch showed the main window and no Help window.
 
 The other two rejection points (subtitle wording, demo video request) are App Store Connect matters, not code.
+
+---
+
+# Apple IIgs sound and music preview — plan (2026-11-03)
+
+Goal: play IIgs sound and music files in the inspector's Content tab.
+
+Design: every decoder turns the file into PCM samples plus a sample rate. One shared
+player view (AVAudioEngine) plays it: Play/Stop, position bar, duration, format and rate.
+Sequenced songs (MOD, SoundSmith) are rendered to PCM up front. MIDI goes through
+AVMIDIPlayer. Playback stops when the inspector closes.
+
+Every format parser is written from a primary source (Apple File Type Notes, IIgs Toolbox
+Reference, or an open-source player), never from memory, and checked against real files.
+
+## Phase 1 — sampled sounds and MIDI
+- [x] Shared audio player view + `.audio` content type in FileInspectorSheet (both enums, print falls back to Info)
+- [x] $D8/$0000 AIFF and $D8/$0001 AIFF-C
+- [x] $D8/$0002 ASIF instrument (play its wave)
+- [x] $D8/$0003 sound resource files and rSound ($8024) resources in any resource fork
+- [x] Raw 8-bit IIgs samples ($D8 other aux types, HyperStudio $8001) — unsigned, $00 = end
+- [x] $D7 MIDI files via AVMIDIPlayer (check it works in the sandbox)
+- [x] Verify with real files in the running app, stop-on-close tested
+
+Phase 1 notes:
+- Tested on 224 real files from the local disks (151 sound resource files, 33+12 ASIF, 28 HyperStudio): all decode.
+- Played in the app: TWILIGHT.MODS/EMH/AWAKE (rSound) with Space to open and Space to play; closing stops playback.
+- MIDI and AIFF/AIFC checked with generated files (no real ones on disk).
+- HyperStudio files from Sound Shop 1.6 have a name instead of the "SSHS" ID; the fields from offset 24 match the spec.
+- Not playable: $D8/$0004 MIDI Synth wave banks (no spec), ACE-compressed HyperStudio sounds.
+
+## Phase 2 — tracker modules
+- [x] Amiga-style MOD (NoiseTracker GS and similar), rendered to PCM
+  - Spec: aes.id.au/modformat.html. Detected by the M.K./FLTn/xCHN tag, so it works for any file type.
+  - All 3 modules on the local disks render; INFLUENCEHISTOR's 51.4 s matches its order list and E6x loop by hand.
+
+## Phase 3 — Ensoniq DOC songs
+- [x] 5503 DOC wave playback core (port of Sean Kasun's BSD-2 player, github.com/mrkite/soundsmith)
+- [x] SoundSmith ($D5/$0007) with its wavebank file from the same folder (inspector now gets the folder's files)
+  - Wave banks are found by content, not name (.W, .D, .WBK, .WAV, WAVE, SONG.WAVE.1 all occur).
+  - 61 of 69 songs on the local disks render. Clipping at most 0.025% of samples.
+  - Not yet: songs that use separate ASIF instrument files (8, SoundSmith 1.01 MUSICS folders).
+  - Rendering takes under 1 s optimised but up to 80 s in an unoptimised Debug build.
+- [ ] MegaTracker / NinjaTracker if specs are found
+
+## Not planned unless a spec turns up
+Music Construction Set, Music Studio, Diversi-Tune, Synthlab, MIDI Synth sequences, Arcade King.
+These show file info only.

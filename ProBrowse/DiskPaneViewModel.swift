@@ -65,6 +65,11 @@ class DiskPaneViewModel: ObservableObject {
     }
 
     /// Show inspector for the given entry
+    /// Files in the same folder as `entry` (including it)
+    func siblings(of entry: DiskCatalogEntry) -> [DiskCatalogEntry] {
+        catalog?.allEntries.filter { !$0.isDirectory && $0.parentPath == entry.parentPath } ?? []
+    }
+
     func showInspector(_ entry: DiskCatalogEntry) {
         guard !entry.isDirectory else { return }
         inspectorEntry = entry
