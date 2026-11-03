@@ -562,8 +562,12 @@ do {
 
     // zip with one stored entry and no central directory
     func zip(_ payload: Data, crc: UInt32) -> Data {
-        var z = Data([0x50, 0x4B, 0x03, 0x04]) + Data(le16(10)) + Data(le16(0)) + Data(le16(0)) + Data(le16(0)) + Data(le16(0))
-        z += Data(le32(Int(crc))) + Data(le32(payload.count)) + Data(le32(payload.count)) + Data(le16(1)) + Data(le16(0))
+        // Built field by field; one long `+` chain is too slow for the type checker
+        var z = Data([0x50, 0x4B, 0x03, 0x04])
+        for field in [10, 0, 0, 0, 0] { z.append(contentsOf: le16(field)) }   // version, flags, method, time, date
+        for field in [Int(crc), payload.count, payload.count] { z.append(contentsOf: le32(field)) }
+        z.append(contentsOf: le16(1))   // name length
+        z.append(contentsOf: le16(0))   // extra length
         return z + Data("A".utf8) + payload
     }
     let goodZip = zip(content, crc: crc), badZip = zip(content, crc: crc ^ 1)
