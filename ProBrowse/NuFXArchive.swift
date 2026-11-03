@@ -83,8 +83,8 @@ struct NuFXMasterHeader {
         let crc = UInt16(data[6]) | (UInt16(data[7]) << 8)
         let totalRecords = UInt32(data[8]) | (UInt32(data[9]) << 8) |
                           (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
-        let creationDate = parseProDOSDate(data, offset: 12)
-        let modificationDate = parseProDOSDate(data, offset: 20)
+        let creationDate = parseNuFXDate(data, offset: 12)
+        let modificationDate = parseNuFXDate(data, offset: 20)
         let masterVersion = UInt16(data[28]) | (UInt16(data[29]) << 8)
         let archiveEOF = UInt32(data[38]) | (UInt32(data[39]) << 8) |
                         (UInt32(data[40]) << 16) | (UInt32(data[41]) << 24)
@@ -189,9 +189,9 @@ struct NuFXRecord {
         let auxType = UInt32(data[offset + 26]) | (UInt32(data[offset + 27]) << 8) |
                      (UInt32(data[offset + 28]) << 16) | (UInt32(data[offset + 29]) << 24)
         let storageType = UInt16(data[offset + 30]) | (UInt16(data[offset + 31]) << 8)
-        let creationDate = parseProDOSDate(data, offset: offset + 32)
-        let modificationDate = parseProDOSDate(data, offset: offset + 40)
-        let archiveDate = parseProDOSDate(data, offset: offset + 48)
+        let creationDate = parseNuFXDate(data, offset: offset + 32)
+        let modificationDate = parseNuFXDate(data, offset: offset + 40)
+        let archiveDate = parseNuFXDate(data, offset: offset + 48)
 
         // attrib_count is the offset of the (deprecated) in-header filename. The two
         // bytes before it hold that filename's length, and the thread headers follow it.
@@ -424,31 +424,32 @@ class NuFXArchive {
     }
 }
 
-// MARK: - ProDOS Date Parsing
+// MARK: - Date Parsing
 
-private func parseProDOSDate(_ data: Data, offset: Int) -> Date? {
-    guard offset + 4 <= data.count else { return nil }
+/// NuFX dates are IIgs Date/Time records: second, minute, hour, year - 1900,
+/// day (0-30), month (0-11), filler, weekday.
+private func parseNuFXDate(_ data: Data, offset: Int) -> Date? {
+    guard offset >= 0, offset + 8 <= data.count else { return nil }
+    if (0..<8).allSatisfy({ data[offset + $0] == 0 }) { return nil }
 
-    let datePart = UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
-    let timePart = UInt16(data[offset + 2]) | (UInt16(data[offset + 3]) << 8)
+    let second = Int(data[offset])
+    let minute = Int(data[offset + 1])
+    let hour = Int(data[offset + 2])
+    var year = Int(data[offset + 3])
+    let day = Int(data[offset + 4])
+    let month = Int(data[offset + 5])
+    guard second < 60, minute < 60, hour < 24, day < 31, month < 12 else { return nil }
 
-    if datePart == 0 && timePart == 0 { return nil }
-
-    let year = Int((datePart >> 9) & 0x7F)
-    let month = Int((datePart >> 5) & 0x0F)
-    let day = Int(datePart & 0x1F)
-    let hour = Int((timePart >> 8) & 0x1F)
-    let minute = Int(timePart & 0x3F)
-
-    // ProDOS years are 0-99, assume 1940-2039 range
-    let fullYear = year < 40 ? 2000 + year : 1900 + year
+    // P8 ShrinkIt stores 2000-2039 as 0-39
+    if year < 40 { year += 100 }
 
     var components = DateComponents()
-    components.year = fullYear
-    components.month = month
-    components.day = day
+    components.year = 1900 + year
+    components.month = month + 1
+    components.day = day + 1
     components.hour = hour
     components.minute = minute
+    components.second = second
 
     return Calendar.current.date(from: components)
 }
@@ -494,6 +495,8 @@ class NuFXLZW {
             throw NuFXError.decompressionFailed
         }
 
+        // CRC-16 of the expanded data, counting every chunk as a full 4096 bytes
+        let storedCRC = UInt16(data[0]) | (UInt16(data[1]) << 8)
         let rleDelim = data[3]
         offset = 4
 
@@ -504,6 +507,9 @@ class NuFXLZW {
             let rleLen = Int(data[offset]) | (Int(data[offset + 1]) << 8)
             let lzwFlag = data[offset + 2]
             offset += 3
+            guard rleLen > 0, rleLen <= CHUNK_SIZE, lzwFlag <= 1 else {
+                throw NuFXError.decompressionFailed
+            }
 
             // Decompress this chunk
             var chunkData: Data
@@ -512,21 +518,22 @@ class NuFXLZW {
                 // LZW compressed
                 // LZW/1 starts each chunk with a fresh table and yields rleLen bytes
                 let (decompressed, bytesUsed) = try LZWDecompressor().decompress(data, from: offset, maxOutput: rleLen)
+                guard decompressed.count == rleLen else { throw NuFXError.decompressionFailed }
                 chunkData = decompressed
                 offset += bytesUsed
-            } else if rleLen == CHUNK_SIZE {
-                // Uncompressed
-                chunkData = Data(data[offset..<min(offset + CHUNK_SIZE, data.count)])
-                offset += chunkData.count
             } else {
-                // RLE only
+                // Uncompressed (rleLen is 4096) or RLE only
                 chunkData = Data(data[offset..<min(offset + rleLen, data.count)])
                 offset += chunkData.count
             }
 
-            // Expand RLE
-            let expanded = expandRLE(chunkData, delimiter: rleDelim, targetSize: CHUNK_SIZE)
+            let expanded = try expandChunk(chunkData, rleLen: rleLen, delimiter: rleDelim,
+                                           remaining: expectedSize - output.count)
             output.append(expanded)
+        }
+
+        if output.count >= expectedSize && NuFXCRC.crc16(output) != storedCRC {
+            throw NuFXError.checksumMismatch
         }
 
         // Trim to expected size
@@ -560,8 +567,12 @@ class NuFXLZW {
             let header = Int(data[offset]) | (Int(data[offset + 1]) << 8)
             offset += 2
 
+            // Bit 15 flags LZW; the length is in the low 13 bits (as in NufxLib)
             let lzwFlag = (header & 0x8000) != 0
-            let rleLen = header & 0x7FFF
+            let rleLen = header & 0x1FFF
+            guard rleLen > 0, rleLen <= CHUNK_SIZE else {
+                throw NuFXError.decompressionFailed
+            }
 
             // A chunk stored without LZW starts the table over
             if !lzwFlag { lzwState.reset() }
@@ -575,20 +586,17 @@ class NuFXLZW {
 
                 // LZW compressed
                 let (decompressed, bytesUsed) = try lzwState.decompress(data, from: offset, maxOutput: rleLen)
+                guard decompressed.count == rleLen else { throw NuFXError.decompressionFailed }
                 chunkData = decompressed
                 offset += bytesUsed
-            } else if rleLen == CHUNK_SIZE {
-                // Uncompressed
-                chunkData = Data(data[offset..<min(offset + CHUNK_SIZE, data.count)])
-                offset += chunkData.count
             } else {
-                // RLE only
+                // Uncompressed (rleLen is 4096) or RLE only
                 chunkData = Data(data[offset..<min(offset + rleLen, data.count)])
                 offset += chunkData.count
             }
 
-            // Expand RLE
-            let expanded = expandRLE(chunkData, delimiter: rleDelim, targetSize: CHUNK_SIZE)
+            let expanded = try expandChunk(chunkData, rleLen: rleLen, delimiter: rleDelim,
+                                           remaining: expectedSize - output.count)
             output.append(expanded)
         }
 
@@ -600,39 +608,48 @@ class NuFXLZW {
         return output
     }
 
-    /// Expand RLE encoded data
-    private static func expandRLE(_ data: Data, delimiter: UInt8, targetSize: Int) -> Data {
-        if data.count == targetSize {
-            return data
+    /// Turns one chunk's data (after LZW) into its 4096 bytes. A chunk length of
+    /// 4096 means no RLE. A short stored final chunk is accepted when it still covers
+    /// the rest of the file; it is padded with zeros as ShrinkIt pads it.
+    private static func expandChunk(_ chunk: Data, rleLen: Int, delimiter: UInt8, remaining: Int) throws -> Data {
+        if rleLen == CHUNK_SIZE {
+            guard chunk.count == CHUNK_SIZE || chunk.count >= remaining else {
+                throw NuFXError.decompressionFailed
+            }
+            var full = Data(chunk.prefix(CHUNK_SIZE))
+            if full.count < CHUNK_SIZE {
+                full.append(Data(count: CHUNK_SIZE - full.count))
+            }
+            return full
         }
+        guard chunk.count == rleLen else { throw NuFXError.decompressionFailed }
+        return try expandRLE(chunk, delimiter: delimiter)
+    }
 
+    /// Expands RLE data, which must yield exactly 4096 bytes and use all its input
+    private static func expandRLE(_ data: Data, delimiter: UInt8) throws -> Data {
         var output = Data()
-        var i = 0
+        output.reserveCapacity(CHUNK_SIZE)
+        var i = data.startIndex
 
-        while i < data.count && output.count < targetSize {
+        while output.count < CHUNK_SIZE {
+            guard i < data.endIndex else { throw NuFXError.decompressionFailed }
             let byte = data[i]
             i += 1
 
             if byte == delimiter {
-                guard i + 1 < data.count else { break }
+                guard i + 1 < data.endIndex else { throw NuFXError.decompressionFailed }
                 let value = data[i]
                 let count = Int(data[i + 1]) + 1
                 i += 2
-
-                for _ in 0..<count {
-                    output.append(value)
-                    if output.count >= targetSize { break }
-                }
+                guard output.count + count <= CHUNK_SIZE else { throw NuFXError.decompressionFailed }
+                output.append(contentsOf: [UInt8](repeating: value, count: count))
             } else {
                 output.append(byte)
             }
         }
 
-        // Pad to target size
-        while output.count < targetSize {
-            output.append(0)
-        }
-
+        guard i == data.endIndex else { throw NuFXError.decompressionFailed }
         return output
     }
 
@@ -734,24 +751,36 @@ class NuFXLZW {
 // MARK: - Squeeze Decompression (Huffman)
 
 class NuFXSqueeze {
+    static let RLE_DELIM: UInt8 = 0x90
+    static let EOF_TOKEN = 256
+
+    /// Expands a NuFX squeeze thread. ShrinkIt leaves out the SQ file header
+    /// (magic, checksum, filename); a stream that has one is accepted too.
     static func decompress(_ data: Data, expectedSize: Int) throws -> Data {
-        // Squeeze format: magic (2) + checksum (2) + filename + tree + data
-        guard data.count >= 4 else {
-            throw NuFXError.decompressionFailed
-        }
+        return try expand(data, limit: expectedSize, requireEOF: false)
+    }
 
-        // Check magic
-        if data[0] != 0x76 || data[1] != 0xFF {
-            throw NuFXError.decompressionFailed
-        }
+    /// Expands a complete SQ stream (as in Binary II), which must end with its
+    /// stop symbol within `maxSize` bytes of output.
+    static func decompressStream(_ data: Data, maxSize: Int) throws -> Data {
+        return try expand(data, limit: maxSize, requireEOF: true)
+    }
 
-        var offset = 4  // Skip magic and checksum
+    private static func expand(_ data: Data, limit: Int, requireEOF: Bool) throws -> Data {
+        var offset = 0
+        var storedChecksum: UInt16? = nil
 
-        // Skip filename (null-terminated)
-        while offset < data.count && data[offset] != 0 {
-            offset += 1
+        // Full SQ header: 76 FF, checksum, NUL-terminated filename. A headerless
+        // stream starts with the node count, which is below 257, so this can't clash.
+        if data.count >= 2 && data[0] == 0x76 && data[1] == 0xFF {
+            guard data.count >= 5 else { throw NuFXError.decompressionFailed }
+            storedChecksum = UInt16(data[2]) | (UInt16(data[3]) << 8)
+            offset = 4
+            while offset < data.count && data[offset] != 0 {
+                offset += 1
+            }
+            offset += 1  // Skip null
         }
-        offset += 1  // Skip null
 
         // Read node count
         guard offset + 2 <= data.count else {
@@ -759,80 +788,90 @@ class NuFXSqueeze {
         }
         let nodeCount = Int(data[offset]) | (Int(data[offset + 1]) << 8)
         offset += 2
+        guard nodeCount <= EOF_TOKEN else { throw NuFXError.decompressionFailed }
 
-        // Read Huffman tree
-        var tree: [(left: Int16, right: Int16)] = []
+        // Read Huffman tree. A child >= 0 is a node index; -(n + 1) is symbol n.
+        var tree: [(left: Int, right: Int)] = []
         for _ in 0..<nodeCount {
             guard offset + 4 <= data.count else {
                 throw NuFXError.decompressionFailed
             }
-            let left = Int16(bitPattern: UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8))
-            let right = Int16(bitPattern: UInt16(data[offset + 2]) | (UInt16(data[offset + 3]) << 8))
+            let left = Int(Int16(bitPattern: UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)))
+            let right = Int(Int16(bitPattern: UInt16(data[offset + 2]) | (UInt16(data[offset + 3]) << 8)))
+            guard left >= -(EOF_TOKEN + 1), left < nodeCount,
+                  right >= -(EOF_TOKEN + 1), right < nodeCount else {
+                throw NuFXError.decompressionFailed
+            }
             tree.append((left, right))
             offset += 4
         }
 
-        // Decompress using Huffman tree. The decoded stream is still run-length
-        // encoded, and a literal $90 takes two bytes, so allow twice the output size.
-        var huffmanOutput = Data()
-        var bitBuffer: UInt32 = 0
+        // Decode symbols and expand runs as they arrive: <byte> $90 <count> repeats
+        // <byte> count times in total; $90 $00 is a literal $90.
+        var output = Data()
+        var checksum: UInt16 = 0
+        var bitBuffer = 0
         var bitsInBuffer = 0
-        let squeezeEOF = 256
+        var lastByte: UInt8 = 0
+        var inRun = false
+        var sawEOF = false
 
-        while huffmanOutput.count < expectedSize * 2 {
-            var node = 0
+        decode: while output.count < limit {
+            // An empty tree only holds the stop symbol
+            var symbol = EOF_TOKEN
+            if !tree.isEmpty {
+                var node = 0
+                while true {
+                    if bitsInBuffer == 0 {
+                        guard offset < data.count else { break decode }
+                        bitBuffer = Int(data[offset])
+                        offset += 1
+                        bitsInBuffer = 8
+                    }
+                    let bit = bitBuffer & 1
+                    bitBuffer >>= 1
+                    bitsInBuffer -= 1
 
-            // Traverse tree
-            while node >= 0 {
-                // Get a bit
-                if bitsInBuffer == 0 {
-                    guard offset < data.count else { break }
-                    bitBuffer = UInt32(data[offset])
-                    offset += 1
-                    bitsInBuffer = 8
-                }
-
-                let bit = bitBuffer & 1
-                bitBuffer >>= 1
-                bitsInBuffer -= 1
-
-                // Follow tree (with bounds check for malformed archives)
-                guard node >= 0 && node < tree.count else { break }
-                if bit == 0 {
-                    node = Int(tree[node].left)
-                } else {
-                    node = Int(tree[node].right)
+                    let child = bit == 0 ? tree[node].left : tree[node].right
+                    if child < 0 {
+                        symbol = -(child + 1)
+                        break
+                    }
+                    node = child
                 }
             }
 
-            if node < 0 {
-                // Leaf node - extract character
-                let value = -(node + 1)
-                if value == squeezeEOF { break }
-                guard value < squeezeEOF else { throw NuFXError.decompressionFailed }
-                huffmanOutput.append(UInt8(value))
-            } else {
+            if symbol == EOF_TOKEN {
+                sawEOF = true
                 break
+            }
+
+            if inRun {
+                inRun = false
+                if symbol == 0 {
+                    lastByte = RLE_DELIM
+                    output.append(RLE_DELIM)
+                    checksum &+= UInt16(RLE_DELIM)
+                } else if symbol > 1 {
+                    let count = min(symbol - 1, limit - output.count)
+                    output.append(contentsOf: [UInt8](repeating: lastByte, count: count))
+                    checksum &+= UInt16(count) &* UInt16(lastByte)
+                }
+            } else if symbol == Int(RLE_DELIM) {
+                inRun = true
+            } else {
+                lastByte = UInt8(symbol)
+                output.append(lastByte)
+                checksum &+= UInt16(lastByte)
             }
         }
 
-        // Expand runs: <byte> $90 <count> repeats <byte> count times in total; $90 $00 is a literal $90
-        var output = Data()
-        var i = 0
-        while i < huffmanOutput.count && output.count < expectedSize {
-            let byte = huffmanOutput[i]
-            i += 1
-            guard byte == 0x90, i < huffmanOutput.count else {
-                output.append(byte)
-                continue
-            }
-            let count = Int(huffmanOutput[i])
-            i += 1
-            if count == 0 {
-                output.append(0x90)
-            } else if let last = output.last, count > 1 {
-                output.append(contentsOf: [UInt8](repeating: last, count: min(count - 1, expectedSize - output.count)))
-            }
+        if requireEOF && (!sawEOF || inRun) {
+            throw NuFXError.decompressionFailed
+        }
+        // The SQ header's checksum is the 16-bit sum of the expanded bytes
+        if sawEOF, let stored = storedChecksum, stored != checksum {
+            throw NuFXError.checksumMismatch
         }
 
         return output

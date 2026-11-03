@@ -309,3 +309,17 @@ Phase 1 notes:
 ## Not planned unless a spec turns up
 Music Construction Set, Music Studio, Diversi-Tune, Synthlab, MIDI Synth sequences, Arcade King.
 These show file info only.
+
+## Review — archive and decoder audit (2026-11-03, cloud session)
+
+A second read-only audit of the archive readers and decoders found no crashes, but 18 smaller
+issues. All were fixed in three commits on main. No Swift compiler was available, so none of
+this has been built or run yet.
+
+- [ ] Build in Xcode and run `Tests/run-tests.sh` (new checks: CRC-32, gzip/zip CRC and
+      truncation, Squeeze with and without header, Binary II squeeze/phantom/high EOF byte,
+      LZW/1 CRC, LZW/2 chunk mask, NuFX dates)
+- [ ] Re-run the 432 real ShrinkIt archives: LZW/1 threads are now CRC-checked and short
+      RLE chunks are errors, so a damaged P8 archive that used to "open" now fails
+- [ ] Look at a DHGR picture (palette entry 1 is now dark blue) and a 640-mode DreamGrafix file
+- [ ] Open an IIgs font and an AppleWorks spreadsheet to check nothing regressed

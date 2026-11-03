@@ -90,19 +90,32 @@ class GzipArchive {
                       (Int(data[data.count - 2]) << 16) |
                       (Int(data[data.count - 1]) << 24)
 
+        let storedCRC = UInt32(data[data.count - 8]) |
+                       (UInt32(data[data.count - 7]) << 8) |
+                       (UInt32(data[data.count - 6]) << 16) |
+                       (UInt32(data[data.count - 5]) << 24)
+
         // Decompress using Compression framework
-        return decompressDeflate(compressedData, expectedSize: origSize)
+        guard let output = decompressDeflate(compressedData, expectedSize: origSize),
+              ArchiveCRC32.checksum(output) == storedCRC else {
+            print("Gzip: Data is truncated or fails its CRC")
+            return nil
+        }
+        return output
     }
 
     /// Largest result the decompressors will produce. These archives hold Apple II
     /// disk images; a bigger size in a header is damage or a decompression bomb.
     static let maxDecompressedSize = 64 * 1024 * 1024
 
-    /// Decompress raw deflate data
+    /// Decompress raw deflate data. Returns nil unless the output is exactly
+    /// `expectedSize` bytes long.
     static func decompressDeflate(_ data: Data, expectedSize: Int) -> Data? {
-        // The size in the header is untrusted, so the buffer is capped
-        let capacity = min(max(expectedSize, data.count * 10), maxDecompressedSize)
-        guard capacity > 0 else { return nil }
+        // The size in the header is untrusted, so it is capped
+        guard expectedSize >= 0, expectedSize <= maxDecompressedSize else { return nil }
+        if expectedSize == 0 { return Data() }
+        // One spare byte shows whether the stream holds more than expected
+        let capacity = expectedSize + 1
         let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
         defer { destinationBuffer.deallocate() }
 
@@ -118,11 +131,30 @@ class GzipArchive {
             )
         }
 
-        if decompressedSize > 0 {
-            return Data(bytes: destinationBuffer, count: decompressedSize)
-        }
+        // A short result means a truncated or damaged stream
+        guard decompressedSize == expectedSize else { return nil }
+        return Data(bytes: destinationBuffer, count: decompressedSize)
+    }
+}
 
-        return nil
+// MARK: - CRC-32
+
+/// CRC-32 as used by gzip and zip (IEEE, reflected polynomial 0xEDB88320)
+enum ArchiveCRC32 {
+    private static let table: [UInt32] = (0..<256).map { index -> UInt32 in
+        var value = UInt32(index)
+        for _ in 0..<8 {
+            value = (value & 1) != 0 ? (0xEDB88320 ^ (value >> 1)) : (value >> 1)
+        }
+        return value
+    }
+
+    static func checksum(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFFFFFF
+        for byte in data {
+            crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+        }
+        return crc ^ 0xFFFFFFFF
     }
 }
 
@@ -279,17 +311,28 @@ class ZipArchive {
             in: entry.dataOffset..<min(entry.dataOffset + Int(entry.compressedSize), data.count)
         )
 
+        let output: Data
         switch entry.compressionMethod {
         case 0:  // Stored (no compression)
-            return compressedData
+            guard compressedData.count == Int(entry.uncompressedSize) else { return nil }
+            output = compressedData
 
         case 8:  // Deflate
-            return GzipArchive.decompressDeflate(compressedData, expectedSize: Int(entry.uncompressedSize))
+            guard let expanded = GzipArchive.decompressDeflate(compressedData, expectedSize: Int(entry.uncompressedSize)) else {
+                return nil
+            }
+            output = expanded
 
         default:
             print("ZIP: Unsupported compression method \(entry.compressionMethod)")
             return nil
         }
+
+        guard ArchiveCRC32.checksum(output) == entry.crc32 else {
+            print("ZIP: \(entry.filename) fails its CRC")
+            return nil
+        }
+        return output
     }
 
     /// Extract first file from ZIP archive (convenience method)

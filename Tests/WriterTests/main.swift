@@ -543,6 +543,92 @@ do {
     check(find(catalog(diskURL), "/DIR/FILE")?.data == content, "a directory copied from an archive lands on the disk")
 }
 
+// MARK: - Archives: checksums, squeeze, LZW and dates
+
+do {
+    check(ArchiveCRC32.checksum(Data("123456789".utf8)) == 0xCBF43926, "CRC-32 check value")
+
+    // gzip holding one stored deflate block
+    let content = Data("Hello, Apple II".utf8)
+    func gzip(_ payload: Data, crc: UInt32, size: Int) -> Data {
+        var g = Data([0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03])
+        g += Data([0x01]) + Data(le16(payload.count)) + Data(le16(payload.count ^ 0xFFFF)) + payload
+        return g + Data(le32(Int(crc))) + Data(le32(size))
+    }
+    let crc = ArchiveCRC32.checksum(content)
+    check(GzipArchive.decompress(gzip(content, crc: crc, size: content.count)) == content, "gzip stored block expands")
+    check(GzipArchive.decompress(gzip(content, crc: crc ^ 1, size: content.count)) == nil, "gzip with a bad CRC is rejected")
+    check(GzipArchive.decompress(gzip(content, crc: crc, size: content.count + 10)) == nil, "gzip shorter than its stated size is rejected")
+
+    // zip with one stored entry and no central directory
+    func zip(_ payload: Data, crc: UInt32) -> Data {
+        var z = Data([0x50, 0x4B, 0x03, 0x04]) + Data(le16(10)) + Data(le16(0)) + Data(le16(0)) + Data(le16(0)) + Data(le16(0))
+        z += Data(le32(Int(crc))) + Data(le32(payload.count)) + Data(le32(payload.count)) + Data(le16(1)) + Data(le16(0))
+        return z + Data("A".utf8) + payload
+    }
+    let goodZip = zip(content, crc: crc), badZip = zip(content, crc: crc ^ 1)
+    check(ZipArchive.parseEntries(from: goodZip).first.flatMap { ZipArchive.extractEntry($0, from: goodZip) } == content, "zip stored entry extracts")
+    check(ZipArchive.parseEntries(from: badZip).first.flatMap { ZipArchive.extractEntry($0, from: badZip) } == nil, "zip entry with a bad CRC is rejected")
+
+    // Squeeze: one node, bit 0 = 'A', bit 1 = stop. "AAA" then stop is bits 0001.
+    let tree = Data(le16(1)) + Data(le16(-66 & 0xFFFF)) + Data(le16(-257 & 0xFFFF))
+    let headerless = tree + Data([0x08])
+    check((try? NuFXSqueeze.decompress(headerless, expectedSize: 3)) == Data("AAA".utf8), "headerless squeeze thread expands")
+    let full = Data([0x76, 0xFF]) + Data(le16(3 * 0x41)) + Data("A.QQ".utf8) + Data([0]) + headerless
+    check((try? NuFXSqueeze.decompress(full, expectedSize: 3)) == Data("AAA".utf8), "squeeze thread with an SQ header expands")
+    check((try? NuFXSqueeze.decompressStream(full, maxSize: 100)) == Data("AAA".utf8), "SQ stream expands")
+    var badSum = full
+    badSum[2] ^= 1
+    check((try? NuFXSqueeze.decompressStream(badSum, maxSize: 100)) == nil, "SQ stream with a bad checksum is rejected")
+    check((try? NuFXSqueeze.decompressStream(Data(full.dropLast()), maxSize: 100)) == nil, "SQ stream without its stop symbol is rejected")
+
+    // Binary II: a squeezed file, then a phantom entry
+    func bnyHeader(_ name: String, length: Int, phantom: UInt8, flags: UInt8, toFollow: UInt8) -> Data {
+        var h = Data(count: 128)
+        h.replaceSubrange(0..<3, with: [0x0A, 0x47, 0x4C])
+        h[3] = 0xE3; h[4] = 0x04; h[7] = 1; h[18] = 0x02
+        h.replaceSubrange(20..<23, with: le32(length).prefix(3))
+        h[23] = UInt8(name.utf8.count)
+        h.replaceSubrange(24..<(24 + name.utf8.count), with: Array(name.utf8))
+        h[124] = phantom; h[125] = flags; h[127] = toFollow
+        return h
+    }
+    var bqy = bnyHeader("A", length: full.count, phantom: 0, flags: 0x80, toFollow: 1) + full + Data(count: 128 - full.count)
+    bqy += bnyHeader("OPTIONS", length: 0, phantom: 1, flags: 0, toFollow: 0)
+    let parsedBQY = BinaryIIArchive(data: bqy)
+    try! parsedBQY.parse()
+    check(parsedBQY.entries.map { $0.filename } == ["A"], "Binary II phantom entries are skipped, got \(parsedBQY.entries.map { $0.filename })")
+    check(parsedBQY.entries.first.flatMap { parsedBQY.extractData(for: $0) } == Data("AAA".utf8), "a squeezed Binary II file expands")
+    var bigEOF = bnyHeader("BIG", length: 4, phantom: 0, flags: 0, toFollow: 0) + Data(count: 128)
+    bigEOF[116] = 1
+    let parsedBig = BinaryIIArchive(data: bigEOF)
+    try! parsedBig.parse()
+    check(parsedBig.entries.first?.fileLength == 0x0100_0004, "Binary II length uses the high byte at +116")
+
+    // LZW/1 and LZW/2 with one RLE-only chunk: 16 runs of 256 'A's
+    let rle = Data((0..<16).flatMap { _ in [UInt8(0xDB), 0x41, 0xFF] })
+    let block = Data(repeating: 0x41, count: 4096)
+    let lzw1 = Data(le16(Int(NuFXCRC.crc16(block)))) + Data([0xFE, 0xDB]) + Data(le16(rle.count)) + Data([0]) + rle
+    check((try? NuFXLZW.decompressLZW1(lzw1, expectedSize: 4000)) == block.prefix(4000), "LZW/1 RLE chunk expands with its CRC")
+    var lzw1BadCRC = lzw1
+    lzw1BadCRC[0] ^= 1
+    check((try? NuFXLZW.decompressLZW1(lzw1BadCRC, expectedSize: 4000)) == nil, "LZW/1 with a bad CRC is rejected")
+    let lzw1Short = Data(lzw1.prefix(4)) + Data(le16(rle.count - 3)) + Data([0]) + rle.dropLast(3)
+    check((try? NuFXLZW.decompressLZW1(lzw1Short, expectedSize: 4000)) == nil, "an RLE chunk that comes up short is rejected")
+    let lzw2 = Data([0xFE, 0xDB]) + Data(le16(0x2000 | rle.count)) + rle
+    check((try? NuFXLZW.decompressLZW2(lzw2, expectedSize: 4096)) == block, "LZW/2 chunk length uses the low 13 bits")
+
+    // NuFX dates are IIgs records with 0-based day and month
+    var master = Data([0x4E, 0xF5, 0x46, 0xE9, 0x6C, 0xE5]) + Data(count: 42)
+    master.replaceSubrange(12..<20, with: [5, 30, 14, 91, 9, 2, 0, 1])
+    master.replaceSubrange(20..<28, with: [0, 0, 0, 5, 0, 0, 0, 1])
+    let mh = NuFXMasterHeader.parse(from: master)
+    let created = mh?.creationDate.map { Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0) }
+    check(created?.year == 1991 && created?.month == 3 && created?.day == 10 && created?.hour == 14 &&
+          created?.minute == 30 && created?.second == 5, "NuFX date parses as 10 March 1991 14:30:05, got \(String(describing: created))")
+    check(mh?.modificationDate.map { Calendar.current.component(.year, from: $0) } == 2005, "NuFX year 5 is 2005")
+}
+
 // MARK: - View model: copy, cut, paste and delete between panes
 
 do {

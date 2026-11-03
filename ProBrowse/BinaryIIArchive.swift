@@ -26,9 +26,12 @@ struct BinaryIIEntry {
     let blockCount: UInt16
     let modificationDate: Date?
     let creationDate: Date?
+    /// Length of the data as stored (the squeezed length for a squeezed file)
     let fileLength: UInt32
     let filename: String
     var dataOffset: Int = 0
+    /// The stored data is an SQ stream; `extractData` expands it
+    var isSqueezed: Bool = false
 
     var fileTypeString: String {
         ProDOSFileTypeInfo.getFileTypeInfo(fileType: fileType, auxType: auxType).shortName
@@ -92,10 +95,19 @@ class BinaryIIArchive {
                 print("BinaryII: Non-standard ID byte \(String(format: "$%02X", idByte))")
             }
 
-            // File length: 3 bytes
-            let fileLength = UInt32(data[offset + 20]) |
+            // File length: 3 bytes at +20, high byte (GS/OS EOF) at +116
+            var fileLength = UInt32(data[offset + 20]) |
                            (UInt32(data[offset + 21]) << 8) |
-                           (UInt32(data[offset + 22]) << 16)
+                           (UInt32(data[offset + 22]) << 16) |
+                           (UInt32(data[offset + 116]) << 24)
+
+            // Directories carry no data, though BLU fills in a length for them
+            if fileType == 0x0F {
+                fileLength = 0
+            }
+
+            // Phantom files (+124 nonzero) hold metadata such as option lists, not files
+            let isPhantom = data[offset + 124] != 0
 
             // Filename or partial pathname: length byte at +23, up to 64 characters at +24
             let filenameLength = min(Int(data[offset + 23]), 64)
@@ -104,6 +116,13 @@ class BinaryIIArchive {
 
             // Data offset
             let dataOffset = offset + BinaryIIConstants.HEADER_SIZE
+
+            // Squeezed if the data flags (+125) say compressed (bit 7) or, as BLU
+            // also accepts, the name ends in .QQ; the data must start with the SQ magic.
+            let dataFlags = data[offset + 125]
+            let claimsSqueezed = (dataFlags & 0x80) != 0 || filename.lowercased().hasSuffix(".qq")
+            let isSqueezed = claimsSqueezed && fileLength >= 2 && dataOffset + 2 <= data.count &&
+                data[dataOffset] == 0x76 && data[dataOffset + 1] == 0xFF
 
             let entry = BinaryIIEntry(
                 accessFlags: accessFlags,
@@ -115,10 +134,13 @@ class BinaryIIArchive {
                 creationDate: parseProDOSDateTime(createDate, createTime),
                 fileLength: fileLength,
                 filename: filename,
-                dataOffset: dataOffset
+                dataOffset: dataOffset,
+                isSqueezed: isSqueezed
             )
 
-            entries.append(entry)
+            if !isPhantom {
+                entries.append(entry)
+            }
 
             // Move to next entry
             // File data is padded to 128-byte boundary
@@ -127,11 +149,14 @@ class BinaryIIArchive {
         }
     }
 
-    /// Extract data for a specific entry
+    /// Extract data for a specific entry, expanding squeezed files.
+    /// Returns nil if the data is truncated or does not expand.
     func extractData(for entry: BinaryIIEntry) -> Data? {
         let endOffset = entry.dataOffset + Int(entry.fileLength)
-        guard endOffset <= data.count else { return nil }
-        return data.subdata(in: entry.dataOffset..<endOffset)
+        guard entry.dataOffset >= 0, endOffset <= data.count else { return nil }
+        let stored = data.subdata(in: entry.dataOffset..<endOffset)
+        guard entry.isSqueezed else { return stored }
+        return try? NuFXSqueeze.decompressStream(stored, maxSize: NuFXArchive.maxThreadSize)
     }
 
     /// Extract first file from archive
