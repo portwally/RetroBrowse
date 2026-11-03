@@ -33,6 +33,8 @@ nonisolated enum MODRenderer {
         var samples: [Sample]   // index 0 is unused so sample numbers can index directly
         var order: [Int]
         var patterns: [[UInt8]] // 64 rows * channels * 4 bytes each
+        /// Per channel, true for the right speaker; nil uses the Amiga layout (L R R L)
+        var rightChannels: [Bool]? = nil
     }
 
     // MARK: - Detection
@@ -101,6 +103,90 @@ nonisolated enum MODRenderer {
                                   loopStart: loopStart, loopLength: loopLength))
         }
         return Module(title: text(0, 20), channels: channels, samples: samples, order: order, patterns: patterns)
+    }
+
+    // MARK: - NinjaTracker Plus
+
+    /// NinjaTracker Plus songs ($D5/$0008) start with "nfc!"
+    static func isNinjaTrackerPlus(_ data: Data) -> Bool {
+        data.count > 9 && data.prefix(4).elementsEqual("nfc!".utf8)
+    }
+
+    /// Reads a NinjaTracker Plus song into the same module form as a MOD. NTP is a
+    /// ProTracker song prepared for the Ensoniq DOC: notes are numbered (13 = C-1) instead of
+    /// stored as Amiga periods, samples are unsigned DOC bytes ending in a $00 stopper, and a
+    /// looped sample may be split into a header instrument and the loop instrument after it.
+    /// Source: FTN $D5/$0008 by Ninjaforce (github.com/antoinevignau/source, ntpsources).
+    static func parseNinjaTrackerPlus(_ data: Data) -> Module? {
+        guard isNinjaTrackerPlus(data) else { return nil }
+        let b = [UInt8](data)
+        let tracks = Int(b[5]), instrumentCount = Int(b[6]), patternCount = Int(b[7]), orderLength = Int(b[8])
+        guard (1...15).contains(tracks), instrumentCount > 0, patternCount > 0, orderLength > 0 else { return nil }
+        var p = 9
+        guard p + tracks + instrumentCount * 7 + orderLength <= b.count else { return nil }
+        // Output channel per track: even numbers are left speakers, odd numbers right
+        let right = (0..<tracks).map { b[p + $0] & 1 == 1 }
+        p += tracks
+
+        struct Header { let type: Int; let length: Int; let volume: Int; let finetune: Int }
+        var headers: [Header] = []
+        for _ in 0..<instrumentCount {
+            var fine = Int(b[p + 4] & 0x0F)
+            if fine > 7 { fine -= 16 }
+            headers.append(Header(type: Int(b[p]) & 3, length: Int(b[p + 1]) | Int(b[p + 2]) << 8,
+                                  volume: min(64, Int(b[p + 3])), finetune: fine))
+            p += 7
+        }
+        let order = (0..<orderLength).map { Int(b[p + $0]) }.filter { $0 < patternCount }
+        p += orderLength
+        let patternSize = tracks * 64 * 4
+        guard !order.isEmpty, p + patternCount * patternSize <= b.count else { return nil }
+
+        // Convert each cell to the MOD layout the renderer reads
+        var patterns: [[UInt8]] = []
+        for n in 0..<patternCount {
+            var mod = [UInt8](repeating: 0, count: patternSize)
+            for cell in 0..<tracks * 64 {
+                let o = p + n * patternSize + cell * 4
+                let note = Int(b[o]), sample = Int(b[o + 1])
+                let period = note > 0 ? Int((856 * pow(2, -Double(note - 13) / 12)).rounded()) : 0
+                mod[cell * 4] = UInt8(sample & 0xF0) | UInt8((period >> 8) & 0x0F)
+                mod[cell * 4 + 1] = UInt8(period & 0xFF)
+                mod[cell * 4 + 2] = UInt8((sample & 0x0F) << 4) | (b[o + 2] & 0x0F)
+                mod[cell * 4 + 3] = b[o + 3]
+            }
+            patterns.append(mod)
+        }
+        p += patternCount * patternSize
+
+        // Sample data follows in instrument order
+        var raw: [[Float]] = []
+        for h in headers {
+            let length = max(0, min(h.length, b.count - p))
+            let bytes = b[p..<p + length]
+            raw.append(bytes.prefix { $0 != 0 }.map { (Float($0) - 128) / 128 })
+            p += length
+        }
+        var samples = [Sample(name: "", data: [], finetune: 0, volume: 0, loopStart: 0, loopLength: 0)]
+        for (i, h) in headers.enumerated() {
+            switch h.type {
+            case 1:   // the whole sample loops
+                samples.append(Sample(name: "", data: raw[i], finetune: h.finetune, volume: h.volume,
+                                      loopStart: 0, loopLength: raw[i].count))
+            case 2 where i + 1 < headers.count:   // header followed by its loop
+                let loop = raw[i + 1]
+                samples.append(Sample(name: "", data: raw[i] + loop, finetune: h.finetune, volume: h.volume,
+                                      loopStart: raw[i].count, loopLength: loop.count))
+            case 3:
+                samples.append(Sample(name: "", data: raw[i], finetune: h.finetune, volume: h.volume,
+                                      loopStart: 0, loopLength: raw[i].count))
+            default:
+                samples.append(Sample(name: "", data: raw[i], finetune: h.finetune, volume: h.volume,
+                                      loopStart: 0, loopLength: 0))
+            }
+        }
+        return Module(title: "", channels: tracks, samples: samples, order: order, patterns: patterns,
+                      rightChannels: right)
     }
 
     // MARK: - Playback state
@@ -368,7 +454,7 @@ nonisolated enum MODRenderer {
             guard !s.data.isEmpty else { continue }
             let step = palClock / Double(2 * max(ch.outPeriod, 28)) / outputRate
             let vol = Float(ch.outVolume) / 64 * gain
-            let isLeft = (c % 4 == 0 || c % 4 == 3)
+            let isLeft = module.rightChannels.map { c < $0.count ? !$0[c] : true } ?? (c % 4 == 0 || c % 4 == 3)
             let loopEnd = s.loopStart + s.loopLength
             for i in 0..<frames {
                 var idx = Int(ch.pos)

@@ -792,6 +792,36 @@ do {
     check(errors.count == 1 && (try! Data(contentsOf: dosURL)) == before, "New Folder is refused on a DOS 3.3 disk")
 }
 
+// MARK: - .img images: raw and DiskCopy 4.2
+
+do {
+    var errors: [String] = []
+    let po = newProDOSImage("forimg.po", size: "800KB")
+    check(add(po, "HELLO", Data("hi".utf8), type: 0x04).ok, "add a file for the .img tests")
+    let raw = try! Data(contentsOf: po)
+
+    let imgURL = workDir.appendingPathComponent("plain.img")
+    try! raw.write(to: imgURL)
+    let plain = makePane(imgURL) { errors.append($0) }
+    check(find(plain.catalog, "/HELLO") != nil && !plain.isArchiveBacked && errors.isEmpty, "a raw ProDOS .img opens and stays writable")
+    check(DiskPaneViewModel.openableExtensions.contains("img"), ".img is offered in the open panel and accepted by drag and drop")
+
+    // DiskCopy 4.2: 84-byte big-endian header in front of the blocks
+    func be32(_ v: Int) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+    var header = [UInt8](repeating: 0, count: 0x54)
+    header[0] = 4; header.replaceSubrange(1..<5, with: Array("TEST".utf8))
+    header.replaceSubrange(0x40..<0x44, with: be32(raw.count))
+    header[0x50] = 1; header[0x51] = 0x24; header[0x52] = 0x01; header[0x53] = 0x00
+    let dcURL = workDir.appendingPathComponent("diskcopy.img")
+    try! (Data(header) + raw).write(to: dcURL)
+    errors = []
+    let dc = makePane(dcURL) { errors.append($0) }
+    check(find(dc.catalog, "/HELLO")?.data == Data("hi".utf8) && dc.isArchiveBacked && errors.isEmpty, "a DiskCopy 4.2 .img opens read-only")
+    check(DiskImageParser.diskCopy42UserData(raw) == nil, "a raw image is not mistaken for DiskCopy")
+    var bad = header; bad[0x53] = 0x05
+    check(DiskImageParser.diskCopy42UserData(Data(bad) + raw) == nil, "a DiskCopy header without $0100 is rejected")
+}
+
 // MARK: - Apple IIgs sounds
 
 do {
@@ -928,6 +958,71 @@ do {
     }
     _ = SoundSmithRenderer.parseSong(Data(song.prefix(700)))
     _ = SoundSmithRenderer.parseWavebank(Data(bank.prefix(0x10030)))
+}
+
+// MARK: - SoundSmith songs with ASIF instrument files
+
+do {
+    func be32(_ v: Int) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+    // One ASIF instrument: a 256-byte square wave ending in a $00 stopper, free-running on both oscillators
+    let waveBytes: [UInt8] = (0..<255).map { $0 < 128 ? 0xC0 : 0x40 } + [0]
+    var wave: [UInt8] = [4] + Array("WAVE".utf8) + [0xFF, 0x00, 0x01, 0x00]
+    wave += [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0] + waveBytes
+    var inst: [UInt8] = [4] + Array("BEEP".utf8) + [0, 0] + [UInt8](repeating: 0, count: 24) + [1, 0, 2, 0, 0, 0] + [1, 1]
+    inst += [0x7F, 0x00, 0x00, 0x00, 0, 0, 0x7F, 0x00, 0x00, 0x00, 0, 0]
+    var asif: [UInt8] = Array("FORM".utf8) + be32(0) + Array("ASIF".utf8)
+    asif += Array("WAVE".utf8) + be32(wave.count) + wave + (wave.count % 2 == 1 ? [0] : [])   // IFF pads odd chunks
+    asif += Array("INST".utf8) + be32(inst.count + 5000) + inst     // size past the end, as NoiseTracker GS writes
+    asif.replaceSubrange(4..<8, with: be32(asif.count - 8))
+
+    let block = 64 * 14
+    var song = [UInt8](repeating: 0, count: 0x258 + block * 3 + 32)
+    song[6] = UInt8(block & 0xFF); song[7] = UInt8(block >> 8)
+    song[8] = 6
+    song[0x14] = 4; song.replaceSubrange(0x15..<0x19, with: Array("BEEP".utf8))
+    song[0x2C] = 0xFE
+    song[0x1D6] = 1
+    song[0x258] = 60
+    song[0x258 + block] = 0x10
+
+    if let parsed = SoundSmithRenderer.parseSong(Data(song)),
+       let built = SoundSmithRenderer.buildWavebank(for: parsed, from: ["BEEP": Data(asif)]) {
+        check(built.missing.isEmpty && built.bank.instruments[0].count == 12, "an ASIF instrument named in the song is loaded")
+        let (left, right) = SoundSmithRenderer.render(song: parsed, bank: built.bank)
+        check(left.contains { abs($0) > 0.01 } || right.contains { abs($0) > 0.01 }, "the ASIF instrument is audible")
+    } else {
+        check(false, "a wave bank is built from ASIF instrument files")
+    }
+    if let parsed = SoundSmithRenderer.parseSong(Data(song)) {
+        check(SoundSmithRenderer.buildWavebank(for: parsed, from: [:]) == nil, "no instrument files gives no wave bank")
+    }
+}
+
+// MARK: - NinjaTracker Plus songs
+
+do {
+    // 2 tracks (left, right), one looped instrument, one pattern, C-1 then a break on row 15
+    var ntp: [UInt8] = Array("nfc!".utf8) + [0, 2, 1, 1, 1]
+    ntp += [0, 1]                                  // output channels
+    ntp += [1, 64, 0, 64, 0, 0, 0x09]              // type 1 (looped), 64 bytes, volume 64, finetune 0
+    ntp += [0]                                     // pattern order
+    var pattern = [UInt8](repeating: 0, count: 2 * 64 * 4)
+    pattern[0] = 13; pattern[1] = 1                // C-1 with instrument 1 on track 1
+    pattern[15 * 8 + 2] = 0x0D                     // pattern break on row 15
+    ntp += pattern
+    ntp += (0..<64).map { $0 < 32 ? 0xC0 : 0x40 }  // square wave, unsigned DOC bytes
+
+    check(AppleIIgsSoundDecoder.isAudio(fileType: 0xD5, auxType: 8, data: Data(ntp)), "a NinjaTracker Plus song opens in the player")
+    if let m = MODRenderer.parseNinjaTrackerPlus(Data(ntp)) {
+        check(m.channels == 2 && m.rightChannels == [false, true], "tracks and their output channels are read")
+        check(m.samples[1].loopLength == 64 && m.samples[1].volume == 64, "a type 1 instrument loops")
+        let (left, right) = MODRenderer.render(m)
+        check(left.count == 16 * 6 * 882, "the pattern break ends the song after 16 rows, got \(left.count)")
+        check(left.contains { abs($0) > 0.1 } && right.contains { abs($0) > 0.01 }, "the note plays, mostly on the left")
+    } else {
+        check(false, "a NinjaTracker Plus song parses")
+    }
+    check(MODRenderer.parseNinjaTrackerPlus(Data(ntp.prefix(40))) == nil, "a truncated NinjaTracker Plus song is rejected")
 }
 
 print("\(checkCount - failureCount) of \(checkCount) checks passed")

@@ -302,12 +302,14 @@ Phase 1 notes:
 - [x] SoundSmith ($D5/$0007) with its wavebank file from the same folder (inspector now gets the folder's files)
   - Wave banks are found by content, not name (.W, .D, .WBK, .WAV, WAVE, SONG.WAVE.1 all occur).
   - 61 of 69 songs on the local disks render. Clipping at most 0.025% of samples.
-  - Not yet: songs that use separate ASIF instrument files (8, SoundSmith 1.01 MUSICS folders).
+  - Songs with separate ASIF instrument files (SoundSmith 1.0 style) build a wave bank from them. All 69 songs on the local disks now play.
   - Rendering takes under 1 s optimised but up to 80 s in an unoptimised Debug build.
-- [ ] MegaTracker / NinjaTracker if specs are found
+- [x] NinjaTracker Plus ($D5/$0008, "nfc!") converted to the MOD renderer (FTN + player source in github.com/antoinevignau/source)
+  - Verified on the 4 sample songs from that repo; CONRAD played in the app.
+- [ ] MegaTracker: no spec found
 
 ## Not planned unless a spec turns up
-Music Construction Set, Music Studio, Diversi-Tune, Synthlab, MIDI Synth sequences, Arcade King.
+MIDI Synth sequences ($D5/$0001, 105 files locally: a MIDI variant split over song, instrument and wave files), Music Construction Set, Music Studio, Diversi-Tune, Synthlab, MIDI Synth sequences, Arcade King.
 These show file info only.
 
 ## Review — archive and decoder audit (2026-11-03, cloud session)
@@ -323,3 +325,8 @@ this has been built or run yet.
       RLE chunks are errors, so a damaged P8 archive that used to "open" now fails
 - [ ] Look at a DHGR picture (palette entry 1 is now dark blue) and a 640-mode DreamGrafix file
 - [ ] Open an IIgs font and an AppleWorks spreadsheet to check nothing regressed
+
+## Golden standard and .img (2026-11-03)
+- [x] Sound reference image: /Users/wally/Documents/Golden Standard File Formats/Sound/GoldenStandard Apple IIgs Sound.img
+      (+ .txt listing every file and its source, tools/ to rebuild). Kept outside the repo: mostly commercial game files.
+- [x] RetroBrowse opens .img: raw images as before (writable), DiskCopy 4.2 by its header (read-only, checksum)

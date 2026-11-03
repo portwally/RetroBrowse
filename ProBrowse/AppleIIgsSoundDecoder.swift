@@ -75,7 +75,7 @@ nonisolated enum AppleIIgsSoundDecoder {
         if fileType == 0xD7 || fileType == 0xD8 { return true }
         if fileType == 0xD5 && auxType == 0x0007 { return true }
         return iffType(data) == "ASIF" || iffType(data) == "AIFF" || iffType(data) == "AIFC"
-            || hasPrefix(data, "SSHS") || MODRenderer.isModule(data)
+            || hasPrefix(data, "SSHS") || MODRenderer.isModule(data) || MODRenderer.isNinjaTrackerPlus(data)
     }
 
     /// `companions` holds the other files in the same folder by upper-case name, for
@@ -88,6 +88,18 @@ nonisolated enum AppleIIgsSoundDecoder {
         if fileType == 0xD7 {
             return data.count >= 4 && hasPrefix(data, "MThd")
                 ? .midi(data) : .unsupported("This MIDI file has no standard MIDI header.")
+        }
+
+        if MODRenderer.isNinjaTrackerPlus(data) {
+            guard let module = MODRenderer.parseNinjaTrackerPlus(data) else {
+                return .unsupported("This NinjaTracker Plus song is damaged or incomplete.")
+            }
+            let (left, right) = MODRenderer.render(module)
+            guard !left.isEmpty else { return .unsupported("This NinjaTracker Plus song has no notes.") }
+            let cut = Double(left.count) >= MODRenderer.maxSeconds * MODRenderer.outputRate - 1 ? ", first 10 minutes" : ""
+            return .samples([DecodedSound(name: name.isEmpty ? "Song" : name, samples: left, right: right,
+                                          sampleRate: MODRenderer.outputRate,
+                                          detail: "\(module.channels)-track NinjaTracker Plus song\(cut)")])
         }
 
         if MODRenderer.isModule(data) {
