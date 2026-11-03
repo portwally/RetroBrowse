@@ -330,3 +330,14 @@ this has been built or run yet.
 - [x] Sound reference image: /Users/wally/Documents/Golden Standard File Formats/Sound/GoldenStandard Apple IIgs Sound.img
       (+ .txt listing every file and its source, tools/ to rebuild). Kept outside the repo: mostly commercial game files.
 - [x] RetroBrowse opens .img: raw images as before (writable), DiskCopy 4.2 by its header (read-only, checksum)
+
+# Quick view, expand/collapse, skins — plan (2026-11-03)
+- [x] Space opens the inspector for any selected file (already wired); inside it Space closes it again, like Finder Quick Look
+- [x] Sounds start playing as soon as the inspector has decoded them; separate Play and Stop buttons
+- [x] Expand All / Collapse All buttons per pane (replace the unused expandAllTrigger toggle with an explicit command)
+- [x] RetroBrowse menu > Settings > Skin: System, Light, Dark, Norton Commander (stored in UserDefaults)
+- [x] Norton Commander skin: blue panes ($0000AA), cyan text, white folders, cyan selection bar with black text,
+      yellow column headers, cyan toolbar with black labels; Modern DOS 9x16 font (CC0) bundled and registered at launch
+- [x] Verify each skin in the running app; tests still pass
+  - Checked in the running app: Settings menu, all skins, Expand/Collapse All, autoplay, Stop, Space to close.
+  - Norton Commander: dates need wider columns than the default; the columns can be dragged wider.

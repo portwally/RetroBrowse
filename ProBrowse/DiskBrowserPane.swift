@@ -20,6 +20,7 @@ struct DiskBrowserPane: View {
     
     @State private var isTargeted = false
     @StateObject private var focusManager = FocusManager.shared
+    @Environment(\.skin) private var skin
     
     var body: some View {
         VStack(spacing: 0) {
@@ -37,6 +38,7 @@ struct DiskBrowserPane: View {
         }
         // The whole pane takes the click, empty space below the file list included
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(skin.paneBackground)
         .contentShape(Rectangle())
         .onTapGesture {
             // Set this pane as active when clicked
@@ -86,61 +88,33 @@ struct DiskBrowserPane: View {
     }
     
     // MARK: - Header View
-    
+
+    /// "Label: value" pair in the header line. Only the file name may shorten; the rest keep their width.
+    private func headerItem(_ label: String, _ value: String?, canShorten: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(skin.font(11))
+                .foregroundColor(skin.secondaryText)
+                .fixedSize()
+            Text(value ?? "—")
+                .font(skin.font(11, weight: .medium))
+                .foregroundColor(value == nil ? skin.secondaryText : skin.folderText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .fixedSize(horizontal: !canShorten, vertical: false)
+        }
+        .layoutPriority(canShorten ? 0 : 1)
+    }
+
     private var headerView: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                // Volume Name
-                HStack(spacing: 4) {
-                    Text("Volume:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if let diskName = viewModel.catalog?.diskName {
-                        Text(diskName)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    } else {
-                        Text("—")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Filesystem Type
-                HStack(spacing: 4) {
-                    Text("Filesystem:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if let diskFormat = viewModel.catalog?.diskFormat {
-                        Text(diskFormat)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    } else {
-                        Text("—")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Volume Size
-                HStack(spacing: 4) {
-                    Text("Size:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if let fileSize = viewModel.diskImageFileSize {
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    } else {
-                        Text("—")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
+                headerItem("Volume:", viewModel.catalog?.diskName)
+                headerItem("Filesystem:", viewModel.catalog?.diskFormat)
+                headerItem("Size:", viewModel.diskImageFileSize.map {
+                    ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
+                })
+
                 // Back button and current path
                 HStack(spacing: 8) {
                     Button(action: {
@@ -148,47 +122,49 @@ struct DiskBrowserPane: View {
                     }) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 12))
+                            .foregroundColor(skin.folderText)
                     }
                     .buttonStyle(.plain)
                     .disabled(!viewModel.canGoBack && viewModel.currentDirectory == nil)
                     .opacity((viewModel.canGoBack || viewModel.currentDirectory != nil) ? 1.0 : 0.3)
-                    
+
                     if let currentDir = viewModel.currentDirectory {
                         Text("📂 \(currentDir.name)")
-                            .font(.caption)
-                            .fontWeight(.medium)
+                            .font(skin.font(11, weight: .medium))
+                            .foregroundColor(skin.folderText)
                     }
                 }
-                
+
                 Spacer()
-                
-                // Filename
-                HStack(spacing: 4) {
-                    Text("Filename:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if let imagePath = viewModel.diskImagePath {
-                        Text(imagePath.lastPathComponent)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Text("—")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+
+                headerItem("Filename:", viewModel.diskImagePath?.lastPathComponent, canShorten: true)
+
+                // Open or close every folder in this pane
+                HStack(spacing: 6) {
+                    Button(action: { viewModel.expandAll() }) {
+                        Image(systemName: "chevron.down.square")
                     }
+                    .help("Expand all folders")
+                    Button(action: { viewModel.collapseAll() }) {
+                        Image(systemName: "chevron.right.square")
+                    }
+                    .help("Collapse all folders")
                 }
+                .buttonStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundColor(skin.folderText)
+                .disabled(viewModel.catalog == nil)
+                .opacity(viewModel.catalog == nil ? 0.3 : 1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
-            
+            .background(skin.headerBackground)
+
             Divider()
+                .overlay(skin.lines)
         }
     }
-    
+
     // MARK: - Browser Content View
     
     private func browserContentView(catalog: DiskCatalog) -> some View {
@@ -197,6 +173,7 @@ struct DiskBrowserPane: View {
             ColumnHeadersView(columnWidths: columnWidths)
             
             Divider()
+                .overlay(skin.lines)
             
             // File List
             fileListView(catalog: catalog)
@@ -238,6 +215,7 @@ struct DiskBrowserPane: View {
                 }
             }
         }
+        .background(skin.paneBackground)
     }
     
     // MARK: - Catalog Entry Row with Drag
@@ -305,7 +283,7 @@ struct DiskBrowserPane: View {
             },
             dragProvider: { createDragProvider(for: $0) },
             level: 0,
-            expandAllTrigger: viewModel.expandAllTrigger,
+            expansion: viewModel.expansion,
             columnWidths: columnWidths
         )
     }
@@ -342,11 +320,11 @@ struct DiskBrowserPane: View {
         VStack(spacing: 16) {
             Image(systemName: "opticaldiscdrive")
                 .font(.system(size: 64))
-                .foregroundColor(.secondary)
+                .foregroundColor(skin.secondaryText)
             
             Text("No Disk Image Loaded")
-                .font(.title3)
-                .foregroundColor(.secondary)
+                .font(skin.isNorton ? skin.font(15) : .title3)
+                .foregroundColor(skin.secondaryText)
             
             Button("Open Disk Image") {
                 viewModel.showingFilePicker = true
@@ -502,12 +480,13 @@ class DraggedEntriesWrapper: NSObject, NSItemProviderWriting, Codable {
 
 struct ColumnHeadersView: View {
     @ObservedObject var columnWidths: ColumnWidths
+    @Environment(\.skin) private var skin
     
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 // Background
-                Color(NSColor.controlBackgroundColor)
+                skin.headerBackground
                 
                 HStack(spacing: 0) {
                     // Name Column
@@ -544,8 +523,8 @@ struct ColumnHeadersView: View {
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text("Created")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.secondary)
+                            .font(skin.font(11, weight: .semibold))
+                            .foregroundColor(skin.columnHeaderText)
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -561,13 +540,14 @@ struct ColumnHeadersView: View {
 struct ColumnHeader: View {
     let title: String
     @Binding var width: Double
+    @Environment(\.skin) private var skin
     
     var body: some View {
         HStack(spacing: 0) {
             Spacer().frame(width: 8)
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(skin.font(11, weight: .semibold))
+                .foregroundColor(skin.columnHeaderText)
             Spacer(minLength: 0)
         }
         .frame(width: width, alignment: .leading)

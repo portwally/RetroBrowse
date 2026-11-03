@@ -10,12 +10,22 @@ import SwiftUI
 @main
 struct ProBrowseApp: App {
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(Skin.storageKey) private var skinName = Skin.system.rawValue
+
+    private var skin: Skin { Skin(rawValue: skinName) ?? .system }
+
+    init() {
+        Skin.registerFonts()
+    }
 
     var body: some Scene {
         // A single main window. Unlike a window group, this scene keeps an entry in the
         // Window menu, so the window can be brought back after it has been closed.
         Window("RetroBrowse", id: "main-window") {
             ContentView()
+                .environment(\.skin, skin)
+                .onAppear { NSApp.appearance = skin.appearance }
+                .onChange(of: skinName) { _, _ in NSApp.appearance = skin.appearance }
                 .onReceive(NotificationCenter.default.publisher(for: .showHelp)) { _ in
                     openWindow(id: "help-window")
                 }
@@ -23,6 +33,18 @@ struct ProBrowseApp: App {
         // The main window always opens at launch, whatever was open when the app last quit
         .defaultLaunchBehavior(.presented)
         .commands {
+            // RetroBrowse menu > Settings > skin choice
+            CommandGroup(replacing: .appSettings) {
+                Menu("Settings") {
+                    Picker("Skin", selection: $skinName) {
+                        ForEach(Skin.allCases) { skin in
+                            Text(skin.title).tag(skin.rawValue)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button("New Disk Image...") {
                     NotificationCenter.default.post(

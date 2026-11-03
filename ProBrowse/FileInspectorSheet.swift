@@ -93,6 +93,13 @@ struct FileInspectorSheet: View {
                     dismiss()
                 }
                 .keyboardShortcut(.escape, modifiers: [])
+                .background(
+                    // Space closes the inspector again, like Quick Look in the Finder
+                    Button("") { dismiss() }
+                        .keyboardShortcut(.space, modifiers: [])
+                        .opacity(0)
+                        .accessibilityHidden(true)
+                )
             }
             .padding()
         }

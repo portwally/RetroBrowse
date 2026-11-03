@@ -113,6 +113,8 @@ struct OverviewHelpView: View {
                 HelpBullet("**Header Bar** - Shows volume name, filesystem, and size")
                 HelpBullet("**File List** - Displays files with type, size, and dates")
                 HelpBullet("**Back Button** - Navigate up from subdirectories")
+                HelpBullet("**Expand / Collapse All** - The two buttons at the right of the header bar open or close every folder in that pane")
+                HelpBullet("**Skins** - RetroBrowse > Settings: System, Light, Dark or Norton Commander")
             }
 
             HelpNote("Always backup your disk images before making changes!")
@@ -209,6 +211,7 @@ struct FileInspectorHelpView: View {
                 HelpBullet("Right-click a file and select \"Inspect File...\"")
                 HelpBullet("Or press **Space** or **Cmd+I** with a file selected")
                 HelpBullet("Or click the magnifying glass icon in the toolbar")
+                HelpBullet("Press **Space** or **Esc** again to close it, like Quick Look in the Finder")
             }
 
             HelpSection("Content Tab") {
@@ -220,6 +223,7 @@ struct FileInspectorHelpView: View {
                 HelpBullet("**Teach Documents** - Apple IIgs Teach files with fonts, styles, and colors")
                 HelpBullet("**Graphics** - HGR, DHGR, SHR, and packed formats with 1x/2x/3x scaling")
                 HelpBullet("**Hi-Res Fonts** - Apple II screen fonts ($07/FNT) with character grid")
+                HelpBullet("**Sound and Music** - IIgs sounds, SoundSmith, NinjaTracker Plus, MOD, MIDI and AIFF start playing when opened; use Play and Stop to replay or end")
                 HelpBullet("**Fonts** - Apple IIgs font preview with sample text and character grid")
                 HelpBullet("**Icons** - Apple IIgs icon files with 16-color palette and transparency")
                 HelpBullet("**Other Files** - Hex dump with ASCII sidebar")
@@ -315,7 +319,7 @@ struct ShortcutsHelpView: View {
             }
 
             HelpSection("Navigation") {
-                ShortcutRow(keys: "Space or Cmd + I", action: "Inspect File")
+                ShortcutRow(keys: "Space or Cmd + I", action: "Inspect File (Space again closes it)")
                 ShortcutRow(keys: "Double-click", action: "Open directory")
                 ShortcutRow(keys: "Cmd + click", action: "Add to selection")
                 ShortcutRow(keys: "Shift + click", action: "Range selection")

@@ -197,7 +197,15 @@ struct AudioPreviewView: View {
                                              resourceFork: e.resourceForkData, name: e.name, companions: folder)
             }
             let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
-            if !Task.isCancelled { document = result }
+            guard !Task.isCancelled else { return }
+            document = result
+            // Start playing straight away, like Quick Look does with sound files
+            switch result {
+            case .samples(let sounds): if let first = sounds.first { player.play(first) }
+            case .midi(let data): player.playMIDI(data)
+            case .audioFile(let data): player.playAudioFile(data)
+            case .unsupported: break
+            }
         }
         .onDisappear { player.stop() }
     }
@@ -259,17 +267,24 @@ struct AudioPreviewView: View {
     @ViewBuilder
     private func controls(title: String, detail: String, canPlay: Bool, play: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 14) {
-                Button {
-                    player.isPlaying ? player.stop() : play()
-                } label: {
-                    Image(systemName: player.isPlaying ? "stop.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 40))
+            HStack(spacing: 10) {
+                Button(action: play) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 36))
                 }
                 .buttonStyle(.plain)
-                .disabled(!canPlay)
-                .keyboardShortcut(.space, modifiers: [])
-                .help(player.isPlaying ? "Stop (Space)" : "Play (Space)")
+                .disabled(!canPlay || player.isPlaying)
+                .opacity(player.isPlaying ? 0.35 : 1)
+                .help("Play")
+
+                Button(action: { player.stop() }) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 36))
+                }
+                .buttonStyle(.plain)
+                .disabled(!player.isPlaying)
+                .opacity(player.isPlaying ? 1 : 0.35)
+                .help("Stop")
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.headline)

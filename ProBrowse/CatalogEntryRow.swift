@@ -23,12 +23,12 @@ struct CatalogEntryRow: View {
     let onDelete: ((DiskCatalogEntry) -> Void)?
     let dragProvider: ((DiskCatalogEntry) -> NSItemProvider)?
     let level: Int
-    let expandAllTrigger: Bool
+    let expansion: ExpansionCommand
     @ObservedObject var columnWidths: ColumnWidths
     
     @State private var isExpanded: Bool
     
-    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, expandAllTrigger: Bool, columnWidths: ColumnWidths) {
+    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, expansion: ExpansionCommand, columnWidths: ColumnWidths) {
         self.entry = entry
         self.isSelected = isSelected
         self.onToggle = onToggle
@@ -44,9 +44,10 @@ struct CatalogEntryRow: View {
         self.onDelete = onDelete
         self.dragProvider = dragProvider
         self.level = level
-        self.expandAllTrigger = expandAllTrigger
+        self.expansion = expansion
         self.columnWidths = columnWidths
-        _isExpanded = State(initialValue: expandAllTrigger)
+        // Folders that appear after Expand All (inside an expanded folder) open too
+        _isExpanded = State(initialValue: expansion.expand)
     }
     
     var body: some View {
@@ -95,15 +96,15 @@ struct CatalogEntryRow: View {
                         onDelete: onDelete,
                         dragProvider: dragProvider,
                         level: level + 1,
-                        expandAllTrigger: expandAllTrigger,
+                        expansion: expansion,
                         columnWidths: columnWidths
                     )
                 }
             }
         }
-        .onChange(of: expandAllTrigger) { oldValue, newValue in
-            if entry.isDirectory && entry.children != nil && !entry.children!.isEmpty {
-                isExpanded = newValue
+        .onChange(of: expansion) { _, command in
+            if entry.isDirectory {
+                isExpanded = command.expand
             }
         }
     }
@@ -128,12 +129,19 @@ struct CatalogEntryRowContent: View {
     let onExport: ((DiskCatalogEntry) -> Void)?
     let onDelete: ((DiskCatalogEntry) -> Void)?
     @ObservedObject var columnWidths: ColumnWidths
+    @Environment(\.skin) private var skin
+
+    /// Text colour for this row in the current skin
+    private var textColor: Color {
+        if isSelected && skin.isNorton { return skin.selectionText }
+        return entry.isDirectory ? skin.folderText : skin.fileText
+    }
     
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 // Background
-                (isSelected ? Color.accentColor.opacity(0.3) : Color.clear)
+                (isSelected ? skin.selectionBackground : Color.clear)
                 
                 HStack(spacing: 0) {
                     // Name Column (with indentation and expand button)
@@ -152,7 +160,7 @@ struct CatalogEntryRowContent: View {
                             Button(action: { isExpanded.toggle() }) {
                                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                                     .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(skin.isNorton ? textColor : .secondary)
                                     .frame(width: 16, height: 16)
                                     .contentShape(Rectangle())
                             }
@@ -165,66 +173,67 @@ struct CatalogEntryRowContent: View {
                             .font(.body)
                         
                         Text(entry.isLocked ? entry.name + " 🔒" : entry.name)
+                            .font(skin.isNorton ? skin.font(13) : .body)
                             .lineLimit(1)
-                            .fontWeight(entry.isDirectory ? .semibold : .regular)
+                            .fontWeight(entry.isDirectory && !skin.isNorton ? .semibold : .regular)
                         
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.nameWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(0.3)
+                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
                     
                     // Type Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.fileTypeString)
-                            .font(.caption)
+                            .font(skin.isNorton ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.typeWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(0.3)
+                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
                     
                     // Aux Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(String(format: "$%04X", entry.auxType))
-                            .font(.caption)
+                            .font(skin.isNorton ? skin.font(11) : .caption)
                             .monospacedDigit()
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.auxWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(0.3)
+                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
                     
                     // Size Column (in bytes)
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         Text("\(entry.size)")
-                            .font(.caption)
+                            .font(skin.isNorton ? skin.font(11) : .caption)
                             .monospacedDigit()
                         Spacer().frame(width: 8)
                     }
                     .frame(width: columnWidths.sizeWidth, alignment: .trailing)
                     
-                    Divider().frame(width: 1).opacity(0.3)
+                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
                     
                     // Modified Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.modificationDate ?? "—")
-                            .font(.caption)
+                            .font(skin.isNorton ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(width: columnWidths.modifiedWidth, alignment: .leading)
                     
-                    Divider().frame(width: 1).opacity(0.3)
+                    Divider().frame(width: 1).opacity(skin.isNorton ? 0 : 0.3).background(skin.isNorton ? skin.lines : .clear)
                     
                     // Created Column
                     HStack(spacing: 0) {
                         Spacer().frame(width: 8)
                         Text(entry.creationDate ?? "—")
-                            .font(.caption)
+                            .font(skin.isNorton ? skin.font(11) : .caption)
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

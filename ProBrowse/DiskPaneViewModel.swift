@@ -15,11 +15,19 @@ struct ImportedFile {
     let data: Data
 }
 
+/// An Expand All or Collapse All request. The serial changes on every request, so asking
+/// twice in a row still reaches folders that were opened or closed by hand in between.
+struct ExpansionCommand: Equatable {
+    var serial = 0
+    var expand = false
+}
+
 class DiskPaneViewModel: ObservableObject {
     @Published var catalog: DiskCatalog?
     @Published var diskImagePath: URL?
     @Published var selectedEntries: Set<UUID> = []
-    @Published var expandAllTrigger = false
+    /// The last Expand All / Collapse All request; folders follow it when it changes
+    @Published var expansion = ExpansionCommand()
     @Published var showingFilePicker = false
     @Published var showingFileInfo = false
     @Published var fileInfoEntry: DiskCatalogEntry?
@@ -680,7 +688,11 @@ class DiskPaneViewModel: ObservableObject {
     }
     
     func expandAll() {
-        expandAllTrigger.toggle()
+        expansion = ExpansionCommand(serial: expansion.serial + 1, expand: true)
+    }
+
+    func collapseAll() {
+        expansion = ExpansionCommand(serial: expansion.serial + 1, expand: false)
     }
     
     // MARK: - Directory Navigation

@@ -205,6 +205,7 @@ struct ToolbarView: View {
     let rightHasDisk: Bool
     let canInspectLeft: Bool
     let canInspectRight: Bool
+    @Environment(\.skin) private var skin
     
     var body: some View {
         HStack(spacing: 0) {
@@ -260,7 +261,7 @@ struct ToolbarView: View {
                 if leftSelectionCount > 0 {
                     Text("\(leftSelectionCount)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(skin.isNorton ? skin.toolbarForeground : .secondary)
                         .padding(.leading, 4)
                 }
             }
@@ -283,7 +284,7 @@ struct ToolbarView: View {
                 if rightSelectionCount > 0 {
                     Text("\(rightSelectionCount)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(skin.isNorton ? skin.toolbarForeground : .secondary)
                         .padding(.trailing, 4)
                 }
 
@@ -337,7 +338,7 @@ struct ToolbarView: View {
             .padding(.trailing, 16)
         }
         .frame(height: 60) // Compact height
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(skin.toolbarBackground)
     }
 }
 
@@ -349,6 +350,14 @@ struct ToolbarButton: View {
     let action: () -> Void
     var disabled: Bool = false
     var destructive: Bool = false
+    @Environment(\.skin) private var skin
+
+    private var color: Color {
+        if skin.isNorton {
+            return disabled ? skin.toolbarForeground.opacity(0.35) : (destructive ? Color(red: 0.67, green: 0, blue: 0) : skin.toolbarForeground)
+        }
+        return disabled ? .secondary : (destructive ? .red : .primary)
+    }
     
     var body: some View {
         Button(action: action) {
@@ -364,9 +373,7 @@ struct ToolbarButton: View {
         }
         .buttonStyle(.borderless)
         .disabled(disabled)
-        .foregroundColor(
-            disabled ? .secondary : (destructive ? .red : .primary)
-        )
+        .foregroundColor(color)
     }
 }
 
