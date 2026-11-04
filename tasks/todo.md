@@ -488,16 +488,28 @@ All CRCs were good and the META chunk gives title, publisher, year etc. for free
 
 ## Verdict: feasible, read-only
 
-- [ ] `WOZImage`: WOZ1 and WOZ2 containers, CRC check, INFO and META.
-- [ ] 5.25": decode 16-sector 6-and-2 into a 140K DOS-ordered image and hand it to the
+- [x] `WOZImage`: WOZ1 and WOZ2 containers, CRC check, INFO and META.
+- [x] 5.25": decode 16-sector 6-and-2 into a 140K DOS-ordered image and hand it to the
       existing DOS 3.3 / ProDOS / Pascal parsers. Add 13-sector 5-and-3 for DOS 3.2.
-- [ ] 3.5" (800K ProDOS): Sony GCR, 12-byte tags + 512 data, variable sectors per track.
+- [x] 3.5" (800K ProDOS): Sony GCR, 12-byte tags + 512 data, variable sectors per track.
       Second step.
-- [ ] Copy-protected disks: open what decodes; if no file system is found, say so and show
+- [x] Copy-protected disks: open what decodes; if no file system is found, say so and show
       META plus a per-track sector count instead of an error.
 - [ ] Show META (title, publisher, developer, year, requirements) in the pane header /
       image inspector.
-- [ ] Read-only at first. Writing means re-encoding tracks into bit streams and fixing
+- [x] Read-only at first. Writing means re-encoding tracks into bit streams and fixing
       the CRC; possible for standard disks, but a later decision.
-- [ ] Test data: the DOS 3.3/3.2 System Masters from AppleCommander's test resources and
+- [x] Test data: the DOS 3.3/3.2 System Masters from AppleCommander's test resources and
       the images in /Applications/Emulatoren/Apple II disks/images.
+
+## Review (built 2026-11-04)
+
+- `WOZImage` reads WOZ1/WOZ2, checks the CRC, reads INFO and META, decodes 16-sector,
+  13-sector and 3.5" disks, and counts address fields and decoded sectors per track.
+- Opens read-only through the existing ProDOS / Pascal / DOS 3.3 parsers. 401 test checks,
+  with GCR encoders in the tests (no copyrighted images in the repo).
+- Real files: DOS 3.3 System Master 560/560 (19 files); 2400 A.D. disks 288/560 and 560/560
+  (52 and 124 files); Utopia 238/560 (26 files); 4am WOZ1 cracks 544/560 (track 34 unformatted).
+- Open: 3.5" is only round-trip tested (no real 3.5" WOZ here). 13-sector disks decode but
+  there is no DOS 3.2 catalog parser. META isn't shown in the UI yet. Partly readable disks
+  open without a warning; a bad CRC is refused.

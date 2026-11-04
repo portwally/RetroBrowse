@@ -39,6 +39,12 @@ class DiskPaneViewModel: ObservableObject {
     /// True when the catalog came from an image extracted out of an archive
     /// (.shk, .bny, .gz, .zip). The file on disk is then not a raw image and must not be written to.
     @Published private(set) var isArchiveBacked = false
+
+    /// The WOZ image the disk was decoded from, nil for every other kind of image
+    @Published private(set) var wozImage: WOZImage?
+
+    /// Title, publisher and other details from a WOZ image's META chunk; empty for other images
+    var diskMetadata: [String: String] { wozImage?.metadata ?? [:] }
     
     /// Size of the opened file on disk, for the pane header
     @Published private(set) var diskImageFileSize: Int?
@@ -115,7 +121,7 @@ class DiskPaneViewModel: ObservableObject {
     
     /// File extensions that open as a disk image or archive rather than being imported as a file
     static let openableExtensions = ["po", "2mg", "hdv", "img", "dsk", "do", "vol",
-                                     "shk", "sdk", "bxy", "bny", "bqy", "bii", "gz", "zip"]
+                                     "woz", "shk", "sdk", "bxy", "bny", "bqy", "bii", "gz", "zip"]
     
     func loadDiskImage(from url: URL) {
         // In the sandbox, access to a file the user picked ends when it is given back.
@@ -311,6 +317,12 @@ class DiskPaneViewModel: ObservableObject {
                 }
             }
 
+            // WOZ (.woz): the bits of each track, decoded into sectors before any parser sees them
+            if ext == "woz" || WOZImage.isWOZ(originalData) {
+                openWOZ(originalData, from: url)
+                return
+            }
+
             // DiskCopy 4.2 (.img / .image): strip the 84-byte header. Changing the disk would
             // break DiskCopy's checksum, so these open read-only.
             if let userData = DiskImageParser.diskCopy42UserData(originalData) {
@@ -329,7 +341,7 @@ class DiskPaneViewModel: ObservableObject {
                 }
             }
             
-            // For .po, .2mg, .hdv, .woz - try directly as ProDOS
+            // For .po, .2mg, .hdv - try directly as ProDOS
             if !isDSK && !isDO && !isVOL {
                 if let catalog = try? DiskImageParser.parseProDOS(data: originalData, diskName: url.lastPathComponent) {
                     finishLoading(catalog, from: url, isArchiveBacked: extractedFromArchive)
@@ -395,9 +407,49 @@ class DiskPaneViewModel: ObservableObject {
         }
     }
     
+    /// Decodes a WOZ image and opens the file system on it. Writing would mean encoding
+    /// whole tracks again, so these open read-only.
+    private func openWOZ(_ data: Data, from url: URL) {
+        let name = url.lastPathComponent
+        let title = "Could Not Open WOZ Image"
+        let woz: WOZImage
+        do {
+            woz = try WOZImage(data: data)
+        } catch {
+            showError(title, "\(name): \(error.localizedDescription)")
+            return
+        }
+        guard woz.checksumMatches else {
+            showError(title, "\(name) is damaged: its checksum does not match its contents.")
+            return
+        }
+        print("💾 WOZ \(woz.version) image: \(woz.kind), \(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors decoded")
+        let decoded = "\(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors could be read."
+        if woz.kind == .disk525Sector13 {
+            showError(title, "\(name) is a 13-sector DOS 3.2 disk, which RetroBrowse cannot read yet. \(decoded)")
+            return
+        }
+        if let image = woz.sectorImage {
+            var catalog = (try? DiskImageParser.parseProDOS(data: image, diskName: name)) ??
+                          (try? UCSDPascalParser.parseUCSD(data: image, diskName: name))
+            if catalog == nil && woz.kind == .disk525Sector16 {
+                catalog = try? DiskImageParser.parseDOS33(data: image, diskName: name)
+            }
+            if let catalog = catalog {
+                finishLoading(catalog, from: url, isArchiveBacked: true, woz: woz)
+                return
+            }
+        }
+        if woz.sectorsDecoded == woz.sectorsExpected {
+            showError(title, "No ProDOS, DOS 3.3 or Pascal file system was found on \(name). \(decoded)")
+        } else {
+            showError(title, "No standard file system was found on \(name). This disk may be copy-protected. \(decoded)")
+        }
+    }
+
     /// Adopts a successfully parsed catalog. Nothing is changed when a load fails,
     /// so the path and the catalog always describe the same file.
-    private func finishLoading(_ newCatalog: DiskCatalog, from url: URL, isArchiveBacked: Bool) {
+    private func finishLoading(_ newCatalog: DiskCatalog, from url: URL, isArchiveBacked: Bool, woz: WOZImage? = nil) {
         // Stay in the same directory when the same image is reloaded after a change
         let openPath = (url == diskImagePath) ? currentDirectory?.directoryPath : nil
         // A different image starts with every folder closed
@@ -413,6 +465,7 @@ class DiskPaneViewModel: ObservableObject {
         diskImagePath = url
         catalog = newCatalog
         self.isArchiveBacked = isArchiveBacked
+        wozImage = woz
         diskImageFileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
         lastSelectedEntry = nil
         navigateToRoot()
@@ -478,6 +531,9 @@ class DiskPaneViewModel: ObservableObject {
     var writeBlockedReason: String? {
         if let path = diskImagePath, temporaryCopies.contains(path) {
             return "This disk image was dropped as a copy, so changes could not be saved to the original. Open it with Open Left or Open Right to change it."
+        }
+        if wozImage != nil {
+            return "WOZ images are read-only. Copy the files to a disk image to change them."
         }
         if isUCSDPascal {
             return "UCSD Pascal disks are read-only."
@@ -1373,6 +1429,7 @@ class DiskPaneViewModel: ObservableObject {
         catalog = nil
         diskImagePath = nil
         isArchiveBacked = false
+        wozImage = nil
         diskImageFileSize = nil
         securityScopedURL?.stopAccessingSecurityScopedResource()
         securityScopedURL = nil

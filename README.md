@@ -61,6 +61,7 @@ Fonts: Shaston 640 by [Kreative Software](https://www.kreativekorp.com/software/
 | Raw image / DiskCopy 4.2 | `.img` | ✅ | ✅* |
 | Generic DSK | `.dsk` | ✅ | ✅ |
 | UCSD Pascal Volume | `.vol` | ✅ | ❌ |
+| WOZ (5.25" and 3.5") | `.woz` | ✅ | ❌ |
 
 \* Only plain `.img` images are writable; DiskCopy 4.2 images open read-only.
 
@@ -96,6 +97,7 @@ Fonts: Shaston 640 by [Kreative Software](https://www.kreativekorp.com/software/
 ### Current Limitations
 
 - UCSD Pascal volumes are read-only
+- WOZ images are read-only. Standard 5.25" disks read fully; copy-protected disks open as far as their sectors can be read; 13-sector DOS 3.2 disks can't be opened yet
 - ShrinkIt, Binary II, Gzip and ZIP archives are read-only; copy files to a disk image to change them
 - Beta quality - expect bugs!
 

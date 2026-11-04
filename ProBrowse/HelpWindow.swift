@@ -146,6 +146,7 @@ struct FormatsHelpView: View {
                 FormatRow(ext: ".hdv", name: "Hard Disk Volume", read: true, write: true)
                 FormatRow(ext: ".img", name: "Raw image or DiskCopy 4.2", read: true, write: true)
                 FormatRow(ext: ".vol", name: "UCSD Pascal", read: true, write: false)
+                FormatRow(ext: ".woz", name: "WOZ (5.25\" and 3.5\" bit images)", read: true, write: false)
             }
 
             HelpSection("Archive Formats") {

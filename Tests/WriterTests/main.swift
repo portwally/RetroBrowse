@@ -1238,5 +1238,354 @@ do {
     check(dos.fileEditBlockedReason != nil, "editing is refused on DOS 3.3")
 } catch {}
 
+// MARK: - WOZ images
+
+/// The bit stream a drive reads, for building WOZ test images (independent of WOZImage)
+struct TrackBits {
+    private(set) var bytes: [UInt8] = []
+    private(set) var count = 0
+    private var pending: UInt32 = 0, pendingBits = 0
+
+    /// Appends the low `bits` bits of `value`, high bit first
+    mutating func write(_ value: UInt32, bits: Int) {
+        pending = pending << UInt32(bits) | value
+        pendingBits += bits
+        count += bits
+        while pendingBits >= 8 {
+            pendingBits -= 8
+            bytes.append(UInt8(truncatingIfNeeded: pending >> UInt32(pendingBits)))
+        }
+        pending &= (1 << UInt32(pendingBits)) - 1
+    }
+    mutating func put(_ values: [UInt8]) { for value in values { write(UInt32(value), bits: 8) } }
+    /// Self-sync FF bytes: eight ones and two zeros each
+    mutating func sync(_ count: Int) { for _ in 0..<count { write(0x3FC, bits: 10) } }
+    var packed: [UInt8] { pendingBits == 0 ? bytes : bytes + [UInt8(truncatingIfNeeded: pending << UInt32(8 - pendingBits))] }
+
+    /// The same track read from `offset` bits in, as if the capture had started there
+    func rotated(by offset: Int) -> TrackBits {
+        let source = packed
+        var out = TrackBits()
+        var i = 0
+        while i < count {
+            let position = (offset + i) % count
+            out.write(UInt32(source[position >> 3] >> (7 - UInt8(position & 7)) & 1), bits: 1)
+            i += 1
+        }
+        return out
+    }
+}
+
+let gcr62: [UInt8] = [
+    0x96, 0x97, 0x9A, 0x9B, 0x9D, 0x9E, 0x9F, 0xA6, 0xA7, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB2, 0xB3,
+    0xB4, 0xB5, 0xB6, 0xB7, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xCB, 0xCD, 0xCE, 0xCF, 0xD3,
+    0xD6, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xE5, 0xE6, 0xE7, 0xE9, 0xEA, 0xEB, 0xEC,
+    0xED, 0xEE, 0xEF, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF]
+let gcr53: [UInt8] = [
+    0xAB, 0xAD, 0xAE, 0xAF, 0xB5, 0xB6, 0xB7, 0xBA, 0xBB, 0xBD, 0xBE, 0xBF, 0xD6, 0xD7, 0xDA, 0xDB,
+    0xDD, 0xDE, 0xDF, 0xEA, 0xEB, 0xED, 0xEE, 0xEF, 0xF5, 0xF6, 0xF7, 0xFA, 0xFB, 0xFD, 0xFE, 0xFF]
+/// DOS 3.3 logical sector written into each physical sector
+let physicalToDOS = [0, 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8, 15]
+
+func fourAndFour(_ v: UInt8) -> [UInt8] { [v >> 1 | 0xAA, v | 0xAA] }
+
+/// Disk bytes for a list of values XORed with their neighbours, ending with the checksum
+func chained(_ values: [UInt8], _ table: [UInt8]) -> [UInt8] {
+    var previous: UInt8 = 0
+    var out: [UInt8] = []
+    for v in values { out.append(table[Int(v ^ previous)]); previous = v }
+    return out + [table[Int(previous)]]
+}
+
+/// A 5.25" track. `sectorsPerTrack` 16 encodes 6-and-2 from a DOS-ordered image,
+/// 13 encodes 5-and-3 in address-field order. `damaged` sectors get a bad data checksum,
+/// `addressMark` replaces the address prologue as copy protection would.
+func track525(_ disk: [UInt8], _ track: Int, sectorsPerTrack: Int = 16, damaged: Set<Int> = [], addressMark: [UInt8]? = nil) -> TrackBits {
+    var t = TrackBits()
+    t.sync(40)
+    for physical in 0..<sectorsPerTrack {
+        let volume: UInt8 = 254, tr = UInt8(track), s = UInt8(physical)
+        let mark = addressMark ?? (sectorsPerTrack == 16 ? [0xD5, 0xAA, 0x96] : [0xD5, 0xAA, 0xB5])
+        t.put(mark + fourAndFour(volume) + fourAndFour(tr) + fourAndFour(s) + fourAndFour(volume ^ tr ^ s) + [0xDE, 0xAA, 0xEB])
+        t.sync(6)
+        var nibbles: [UInt8]
+        if sectorsPerTrack == 16 {
+            let start = (track * 16 + physicalToDOS[physical]) * 256
+            let sector = Array(disk[start..<start + 256])
+            // 86 values with the low bit pairs of three bytes each (pair swapped), then the high six bits
+            var values = [UInt8](repeating: 0, count: 342)
+            for i in 0..<86 {
+                for part in 0..<3 where i + part * 86 < 256 {
+                    let b = sector[i + part * 86]
+                    values[i] |= ((b & 1) << 1 | (b >> 1) & 1) << UInt8(part * 2)
+                }
+            }
+            for i in 0..<256 { values[86 + i] = sector[i] >> 2 }
+            nibbles = chained(values, gcr62)
+        } else {
+            let start = (track * 13 + physical) * 256
+            let b = Array(disk[start..<start + 256])
+            var threes = [UInt8](repeating: 0, count: 154), fives = [UInt8](repeating: 0, count: 256)
+            for k in 0...50 {
+                let o = (50 - k) * 5
+                for part in 0..<5 { fives[part * 51 + k] = b[o + part] >> 3 }
+                threes[k] = (b[o] & 7) << 2 | (b[o + 3] >> 2 & 1) << 1 | (b[o + 4] >> 2 & 1)
+                threes[51 + k] = (b[o + 1] & 7) << 2 | (b[o + 3] >> 1 & 1) << 1 | (b[o + 4] >> 1 & 1)
+                threes[102 + k] = (b[o + 2] & 7) << 2 | (b[o + 3] & 1) << 1 | (b[o + 4] & 1)
+            }
+            fives[255] = b[255] >> 3
+            threes[153] = b[255] & 7
+            nibbles = chained(threes.reversed() + fives, gcr53)
+        }
+        if damaged.contains(physical) { nibbles[100] = nibbles[100] == 0xFF ? 0xFE : 0xFF }
+        t.put([0xD5, 0xAA, 0xAD] + nibbles + [0xDE, 0xAA, 0xEB])
+        t.sync(16)
+    }
+    return t
+}
+
+/// The 703 6-bit values of a 3.5" sector (12 tag bytes + 512 data bytes), as the Sony driver writes them
+func values35(_ src: [UInt8]) -> [UInt8] {
+    var b1 = [UInt8](repeating: 0, count: 175), b2 = b1, b3 = b1
+    var c1 = 0, c2 = 0, c3 = 0, i = 0, j = 0
+    while true {
+        c1 = (c1 & 0xFF) << 1
+        if c1 & 0x100 != 0 { c1 += 1 }
+        var v = Int(src[i]); i += 1
+        c3 += v
+        if c1 & 0x100 != 0 { c3 += 1; c1 &= 0xFF }
+        b1[j] = UInt8((v ^ c1) & 0xFF)
+        v = Int(src[i]); i += 1
+        c2 += v
+        if c3 > 0xFF { c2 += 1; c3 &= 0xFF }
+        b2[j] = UInt8((v ^ c3) & 0xFF)
+        if i == 524 { break }
+        v = Int(src[i]); i += 1
+        c1 += v
+        if c2 > 0xFF { c1 += 1; c2 &= 0xFF }
+        b3[j] = UInt8((v ^ c2) & 0xFF)
+        j += 1
+    }
+    var out: [UInt8] = []
+    for k in 0...174 {
+        out.append((b1[k] & 0xC0) >> 2 | (b2[k] & 0xC0) >> 4 | (b3[k] & 0xC0) >> 6)
+        out += [b1[k] & 0x3F, b2[k] & 0x3F]
+        if k != 174 { out.append(b3[k] & 0x3F) }
+    }
+    let c4 = (c1 & 0xC0) >> 6 | (c2 & 0xC0) >> 4 | (c3 & 0xC0) >> 2
+    return out + [UInt8(c4), UInt8(c3 & 0x3F), UInt8(c2 & 0x3F), UInt8(c1 & 0x3F)]
+}
+
+/// A 3.5" track from an 800K ProDOS-ordered image, sectors written in 2:1 interleave
+func track35(_ disk: [UInt8], track: Int, side: Int, firstBlock: Int) -> TrackBits {
+    let count = 12 - track / 16
+    let order = (0..<count).filter { $0 % 2 == 0 } + (0..<count).filter { $0 % 2 == 1 }
+    var t = TrackBits()
+    t.sync(40)
+    for sector in order {
+        let tr = UInt8(track & 0x3F), s = UInt8(sector), sd = UInt8(side << 5 | track >> 6), format: UInt8 = 0x22
+        t.put([0xD5, 0xAA, 0x96] + [tr, s, sd, format, tr ^ s ^ sd ^ format].map { gcr62[Int($0)] } + [0xDE, 0xAA])
+        t.sync(5)
+        let start = (firstBlock + sector) * 512
+        let values = values35([UInt8](repeating: 0, count: 12) + disk[start..<start + 512])
+        t.put([0xD5, 0xAA, 0xAD, gcr62[sector]] + values.map { gcr62[Int($0)] } + [0xDE, 0xAA])
+        t.sync(10)
+    }
+    return t
+}
+
+/// A WOZ 1 or WOZ 2 file. `trackMap` maps TMAP positions to indexes into `tracks`.
+func wozFile(version: Int, diskType: UInt8, sides: UInt8 = 1, trackMap: [Int: Int], tracks: [TrackBits], meta: String? = nil) -> Data {
+    func chunk(_ id: String, _ body: [UInt8]) -> [UInt8] { Array(id.utf8) + le32(body.count) + body }
+    var info: [UInt8] = [UInt8(version), diskType, 0, 1, 0] + Array("RetroBrowse tests".utf8.map { $0 } + [UInt8](repeating: 0x20, count: 15))
+    let largest = tracks.map { ($0.packed.count + 511) / 512 }.max() ?? 0
+    info += [sides, 0, diskType == 2 ? 16 : 32] + le16(0) + le16(0) + le16(largest)
+    info += [UInt8](repeating: 0, count: 60 - info.count)
+    var tmap = [UInt8](repeating: 0xFF, count: 160)
+    for (position, index) in trackMap { tmap[position] = UInt8(index) }
+
+    var trks: [UInt8] = []
+    if version == 2 {
+        var entries: [UInt8] = [], blocks: [UInt8] = []
+        var block = 3
+        for bits in tracks {
+            var packed = bits.packed
+            let count = (packed.count + 511) / 512
+            packed += [UInt8](repeating: 0, count: count * 512 - packed.count)
+            entries += le16(block) + le16(count) + le32(bits.count)
+            blocks += packed
+            block += count
+        }
+        entries += [UInt8](repeating: 0, count: 1280 - entries.count)
+        trks = entries + blocks
+    } else {
+        for bits in tracks {
+            var packed = bits.packed
+            let used = packed.count
+            packed += [UInt8](repeating: 0, count: 6646 - packed.count)
+            trks += packed + le16(used) + le16(bits.count) + le16(0xFFFF) + [0, 0] + [0, 0]
+        }
+    }
+    var body = chunk("INFO", info) + chunk("TMAP", tmap) + chunk("TRKS", trks)
+    if let meta = meta { body += chunk("META", Array(meta.utf8)) }
+    let magic: [UInt8] = Array((version == 2 ? "WOZ2" : "WOZ1").utf8) + [0xFF, 0x0A, 0x0D, 0x0A]
+    return Data(magic) + Data(le32(Int(ArchiveCRC32.checksum(Data(body))))) + Data(body)
+}
+
+/// A 35-track 5.25" WOZ, each whole track at quarter track t * 4
+func woz525(_ disk: Data, version: Int = 2, sectorsPerTrack: Int = 16, meta: String? = nil, rotate: Int = 0,
+            damaged: [Int: Set<Int>] = [:], addressMark: [UInt8]? = nil) -> Data {
+    let image = [UInt8](disk)
+    let tracks = (0..<35).map { track -> TrackBits in
+        let bits = track525(image, track, sectorsPerTrack: sectorsPerTrack, damaged: damaged[track] ?? [], addressMark: addressMark)
+        return rotate == 0 ? bits : bits.rotated(by: rotate)
+    }
+    return wozFile(version: version, diskType: 1, trackMap: Dictionary(uniqueKeysWithValues: (0..<35).map { ($0 * 4, $0) }),
+                   tracks: tracks, meta: meta)
+}
+
+do {
+    var errors: [String] = []
+    check(DiskPaneViewModel.openableExtensions.contains("woz"), ".woz is offered in the open panel")
+
+    // A DOS 3.3 disk with one file, as WOZ 2 with metadata
+    let dskURL = workDir.appendingPathComponent("forwoz.dsk")
+    try! blankDOS33().write(to: dskURL)
+    let payload = bytes(3000, seed: 9)
+    check(wait { DOS33Writer.shared.addFile(diskImagePath: dskURL, fileName: "WOZ FILE", fileData: payload, fileType: 0x06, auxType: 0x2000, completion: $0) }.ok, "add a file for the WOZ tests")
+    let dsk = try! Data(contentsOf: dskURL)
+
+    let woz2 = woz525(dsk, meta: "title\tTest Disk\npublisher\tNobody\nlanguage\tEnglish\n")
+    let decoded = try? WOZImage(data: woz2)
+    check(decoded?.kind == .disk525Sector16 && decoded?.sectorImage == dsk && decoded?.checksumMatches == true,
+          "a WOZ 2 track encoding decodes back to the same DOS-ordered image")
+    check(decoded?.version == 2 && decoded?.info.creator == "RetroBrowse tests" && decoded?.info.diskType == 1 && decoded?.info.optimalBitTiming == 32,
+          "INFO is read, got \(String(describing: decoded?.info))")
+    check(decoded?.sectorsDecoded == 560 && decoded?.tracks.count == 35, "every sector decodes")
+
+    let woz2URL = workDir.appendingPathComponent("dos33.woz")
+    try! woz2.write(to: woz2URL)
+    let pane = makePane(woz2URL) { errors.append($0) }
+    check(pane.catalog?.entries.first { $0.name == "WOZ FILE" }?.data == payload && errors.isEmpty, "the file on a WOZ 2 disk reads back, errors: \(errors)")
+    check(pane.isArchiveBacked && pane.writeBlockedReason?.contains("WOZ") == true, "a WOZ disk opens read-only, with a WOZ reason")
+    check(pane.diskMetadata == ["title": "Test Disk", "publisher": "Nobody", "language": "English"], "META is read, got \(pane.diskMetadata)")
+    pane.ejectDisk()
+    check(pane.wozImage == nil && pane.diskMetadata.isEmpty, "ejecting forgets the WOZ details")
+
+    // WOZ 1, with every track starting in the middle of a sector so one wraps around the end
+    let woz1URL = workDir.appendingPathComponent("dos33-v1.woz")
+    try! woz525(dsk, version: 1, rotate: 2000).write(to: woz1URL)
+    errors = []
+    let pane1 = makePane(woz1URL) { errors.append($0) }
+    check(pane1.catalog?.entries.first { $0.name == "WOZ FILE" }?.data == payload && errors.isEmpty, "the file on a WOZ 1 disk reads back, errors: \(errors)")
+    check(pane1.wozImage?.version == 1 && pane1.wozImage?.sectorsDecoded == 560, "a sector that wraps around the track end is found")
+
+    // Another image opened in the same pane is writable again
+    let plainURL = workDir.appendingPathComponent("after-woz.dsk")
+    try! blankDOS33().write(to: plainURL)
+    pane1.loadDiskImage(from: plainURL)
+    check(pane1.wozImage == nil && pane1.writeBlockedReason == nil, "a plain disk opened after a WOZ is writable")
+
+    // ProDOS 140K and the 2:1 sector order of ProDOS blocks
+    let po = newProDOSImage("forwoz.po", size: "140KB")
+    check(add(po, "HELLO", Data("hi from woz".utf8), type: 0x04).ok, "add a ProDOS file for WOZ")
+    let prodosURL = workDir.appendingPathComponent("prodos.woz")
+    try! woz525(dosOrdered(try! Data(contentsOf: po))).write(to: prodosURL)
+    errors = []
+    let pp = makePane(prodosURL) { errors.append($0) }
+    check(find(pp.catalog, "/HELLO")?.data == Data("hi from woz".utf8) && errors.isEmpty, "a ProDOS WOZ disk opens, errors: \(errors)")
+
+    // A damaged sector is counted on its track; the rest of the disk still opens
+    let damaged = try? WOZImage(data: woz525(dsk, damaged: [3: [5], 20: [0, 1]]))
+    check(damaged?.tracks[3].decoded == 15 && damaged?.tracks[20].decoded == 14 && damaged?.tracks[4].decoded == 16 && damaged?.sectorsDecoded == 557,
+          "damaged sectors show in the per-track counts, got \(String(describing: damaged?.tracks.map { $0.decoded }))")
+    check(damaged?.tracks[3].addressesFound == 16 && damaged?.tracks[20].addressesFound == 16, "a damaged track still has all its address fields")
+
+    // Copy protection with its own address prologue: nothing decodes and the error says why
+    let protectedURL = workDir.appendingPathComponent("protected.woz")
+    try! woz525(dsk, addressMark: [0xD5, 0xAA, 0x97]).write(to: protectedURL)
+    errors = []
+    let prot = makePane(protectedURL) { errors.append($0) }
+    check((try? WOZImage(data: woz525(dsk, addressMark: [0xD5, 0xAA, 0x97])))?.tracks.allSatisfy { $0.isPresent && $0.addressesFound == 0 } == true,
+          "a protected track has no standard address fields")
+    check(prot.catalog == nil && errors.count == 1 && errors[0].contains("copy-protected") && errors[0].contains("0 of 560"),
+          "an undecodable disk explains itself, got \(errors)")
+
+    // A bad CRC is refused; a CRC of 0 means none was stored
+    var badCRC = woz2
+    badCRC[2000] ^= 0x01
+    check((try? WOZImage(data: badCRC))?.checksumMatches == false, "a CRC mismatch is reported")
+    let badURL = workDir.appendingPathComponent("badcrc.woz")
+    try! badCRC.write(to: badURL)
+    errors = []
+    let bad = makePane(badURL) { errors.append($0) }
+    check(bad.catalog == nil && errors.first?.contains("checksum") == true, "a WOZ with a bad CRC is refused, got \(errors)")
+    var noCRC = woz2
+    noCRC.replaceSubrange(8..<12, with: [0, 0, 0, 0])
+    check((try? WOZImage(data: noCRC))?.checksumMatches == true, "a CRC of 0 is accepted")
+
+    // Truncated and garbage files never crash
+    for length in [0, 8, 12, 20, 60, 100, 247, 300, 1536, 3000, woz2.count / 2, woz2.count - 1] {
+        let cut = woz2.prefix(length)
+        let result = try? WOZImage(data: cut)
+        check(result == nil || result!.sectorsDecoded < 560 || length == woz2.count - 1, "a WOZ cut to \(length) bytes does not decode fully")
+    }
+    let cutURL = workDir.appendingPathComponent("cut.woz")
+    try! woz2.prefix(200).write(to: cutURL)
+    errors = []
+    let cutPane = makePane(cutURL) { errors.append($0) }
+    check(cutPane.catalog == nil && errors.first?.contains("damaged") == true, "a cut-off WOZ shows an error, got \(errors)")
+    var garbage = Data(woz2.prefix(256)) + Data((0..<4000).map { UInt8(truncatingIfNeeded: $0 &* 77) })
+    garbage.replaceSubrange(256..<1536, with: (0..<1280).map { UInt8(truncatingIfNeeded: $0 &* 13) })
+    _ = try? WOZImage(data: garbage)
+    var hugeTrack = woz2
+    hugeTrack.replaceSubrange(256..<264, with: le16(0xFFFF) + le16(0xFFFF) + le32(0x7FFF_FFFF))
+    check((try? WOZImage(data: hugeTrack))?.tracks[0].decoded == 0, "a track entry pointing past the file is skipped")
+    // Every track entry claiming the same huge run of blocks: decoding stays quick
+    var oversized = Data(woz2.prefix(1536)) + Data((0..<600_000).map { UInt8(truncatingIfNeeded: $0 &* 2_654_435_761 >> 13) })
+    for index in 0..<35 {
+        oversized.replaceSubrange(256 + index * 8..<264 + index * 8, with: le16(3) + le16(0xFFFF) + le32(0xFFFF_FFFF))
+    }
+    let started = Date()
+    let oversizedResult = try? WOZImage(data: oversized)
+    check(oversizedResult != nil && Date().timeIntervalSince(started) < 10, "oversized track entries are capped, took \(Date().timeIntervalSince(started))s")
+    check((try? WOZImage(data: Data("WOZ2".utf8) + Data([0xFF, 0x0A, 0x0D, 0x0A, 0, 0, 0, 0]))) == nil, "a WOZ without chunks is refused")
+
+    // DOS 3.2: 13 sectors per track in 5-and-3, decoded but not browsable
+    let d13 = Data((0..<35 * 13 * 256).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ $0 >> 8) })
+    let w13 = try? WOZImage(data: woz525(d13, sectorsPerTrack: 13))
+    check(w13?.kind == .disk525Sector13 && w13?.sectorImage == d13 && w13?.sectorsExpected == 455, "a 13-sector disk decodes")
+    let d13URL = workDir.appendingPathComponent("dos32.woz")
+    try! woz525(d13, sectorsPerTrack: 13).write(to: d13URL)
+    errors = []
+    _ = makePane(d13URL) { errors.append($0) }
+    check(errors.first?.contains("13-sector") == true, "a DOS 3.2 disk explains why it does not open, got \(errors)")
+
+    // 3.5" 800K: Sony GCR with 12 down to 8 sectors per track, blocks counted track by track, side by side
+    let po800 = newProDOSImage("forwoz800.po", size: "800KB")
+    let big = bytes(70_000, seed: 3)
+    check(add(po800, "BIG", big).ok && add(po800, "HELLO", Data("hi 3.5".utf8), type: 0x04).ok, "add files for the 3.5\" WOZ")
+    let image800 = [UInt8](try! Data(contentsOf: po800))
+    var tracks35: [TrackBits] = [], map35: [Int: Int] = [:]
+    var firstBlock = 0
+    for track in 0..<80 {
+        for side in 0..<2 {
+            map35[track * 2 + side] = tracks35.count
+            tracks35.append(track35(image800, track: track, side: side, firstBlock: firstBlock))
+            firstBlock += 12 - track / 16
+        }
+    }
+    let woz35 = wozFile(version: 2, diskType: 2, sides: 2, trackMap: map35, tracks: tracks35)
+    let w35 = try? WOZImage(data: woz35)
+    check(w35?.kind == .disk35 && w35?.sectorImage == Data(image800) && w35?.sectorsDecoded == 1600 && w35?.info.sides == 2,
+          "a 3.5\" WOZ decodes to the ProDOS-ordered image, got \(String(describing: w35?.sectorsDecoded))")
+    let url35 = workDir.appendingPathComponent("disk35.woz")
+    try! woz35.write(to: url35)
+    errors = []
+    let p35 = makePane(url35) { errors.append($0) }
+    check(find(p35.catalog, "/BIG")?.data == big && find(p35.catalog, "/HELLO") != nil && errors.isEmpty && p35.writeBlockedReason != nil,
+          "a 3.5\" WOZ disk opens read-only, errors: \(errors)")
+}
+
 print("\(checkCount - failureCount) of \(checkCount) checks passed")
 exit(failureCount == 0 ? 0 : 1)

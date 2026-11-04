@@ -32,4 +32,9 @@ extension UTType {
     static var `do`: UTType {
         UTType(filenameExtension: "do") ?? .data
     }
+
+    // WOZ bit-stream disk image (Applesauce)
+    static var woz: UTType {
+        UTType(filenameExtension: "woz") ?? .data
+    }
 }
