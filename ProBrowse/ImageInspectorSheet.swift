@@ -22,63 +22,70 @@ struct ImageInspectorSheet: View {
                 .fontWeight(.semibold)
             
             if let catalog = viewModel.catalog, let imagePath = viewModel.diskImagePath {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Image Info
-                    Group {
-                        InfoRow(label: "Volume Name", value: catalog.diskName)
-                        InfoRow(label: "Format", value: catalog.diskFormat)
-                        InfoRow(label: "File", value: imagePath.lastPathComponent)
-                        InfoRow(label: "Path", value: imagePath.path)
-                        InfoRow(label: "Size", value: formatBytes(catalog.diskSize))
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Image Info
+                        Group {
+                            InfoRow(label: "Volume Name", value: catalog.diskName)
+                            InfoRow(label: "Format", value: catalog.diskFormat)
+                            InfoRow(label: "File", value: imagePath.lastPathComponent)
+                            InfoRow(label: "Path", value: imagePath.path)
+                            InfoRow(label: "Size", value: formatBytes(catalog.diskSize))
+                        }
                     
-                    Divider()
+                        Divider()
+
+                        if let woz = viewModel.wozImage {
+                            WOZDetails(woz: woz)
+                            Divider()
+                        }
                     
-                    // Statistics
-                    Group {
-                        InfoRow(label: "Total Files", value: "\(catalog.totalFiles)")
-                        InfoRow(label: "Image Files", value: "\(catalog.imageFiles)")
-                        InfoRow(label: "Root Entries", value: "\(catalog.entries.count)")
-                    }
+                        // Statistics
+                        Group {
+                            InfoRow(label: "Total Files", value: "\(catalog.totalFiles)")
+                            InfoRow(label: "Image Files", value: "\(catalog.imageFiles)")
+                            InfoRow(label: "Root Entries", value: "\(catalog.entries.count)")
+                        }
                     
-                    Divider()
+                        Divider()
                     
-                    // Actions
-                    VStack(alignment: .leading, spacing: 12) {
-                        Button(action: verifyImage) {
-                            HStack {
-                                if isVerifying {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .frame(width: 16, height: 16)
-                                } else {
-                                    Image(systemName: "checkmark.shield")
+                        // Actions
+                        VStack(alignment: .leading, spacing: 12) {
+                            Button(action: verifyImage) {
+                                HStack {
+                                    if isVerifying {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .frame(width: 16, height: 16)
+                                    } else {
+                                        Image(systemName: "checkmark.shield")
+                                    }
+                                    Text("Verify Image Integrity")
                                 }
-                                Text("Verify Image Integrity")
                             }
-                        }
-                        .disabled(isVerifying)
+                            .disabled(isVerifying)
                         
-                        if let result = verificationResult {
-                            Text(result)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(result.contains("✅") ? .green : .red)
-                                .padding(.leading, 24)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                            if let result = verificationResult {
+                                Text(result)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(result.contains("✅") ? .green : .red)
+                                    .padding(.leading, 24)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         
-                        Button(action: {
-                            NSWorkspace.shared.activateFileViewerSelecting([imagePath])
-                        }) {
-                            HStack {
-                                Image(systemName: "folder")
-                                Text("Show in Finder")
+                            Button(action: {
+                                NSWorkspace.shared.activateFileViewerSelecting([imagePath])
+                            }) {
+                                HStack {
+                                    Image(systemName: "folder")
+                                    Text("Show in Finder")
+                                }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("No disk image loaded")
                     .foregroundColor(.secondary)
@@ -96,7 +103,7 @@ struct ImageInspectorSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 500, height: 500)
+        .frame(width: 520, height: 600)
     }
     
     private func verifyImage() {
@@ -237,4 +244,62 @@ struct InfoRow: View {
 
 #Preview {
     ImageInspectorSheet(viewModel: DiskPaneViewModel())
+}
+
+// MARK: - WOZ details
+
+/// What a WOZ image says about itself: its INFO chunk, how much of it could be read,
+/// and the title, publisher and other details from its META chunk
+private struct WOZDetails: View {
+    let woz: WOZImage
+
+    /// META keys from the WOZ 2 reference, in a sensible reading order
+    private static let metaLabels: [(key: String, label: String)] = [
+        ("title", "Title"), ("subtitle", "Subtitle"), ("publisher", "Publisher"),
+        ("developer", "Developer"), ("copyright", "Copyright"), ("version", "Version"),
+        ("language", "Language"), ("requires_machine", "Requires"), ("requires_ram", "RAM"),
+        ("notes", "Notes"), ("side", "Side"), ("side_name", "Side Name"),
+        ("contributor", "Contributor"), ("image_date", "Imaged"),
+    ]
+
+    private var diskKind: String {
+        switch woz.kind {
+        case .disk525Sector16: return "5.25\" disk, 16 sectors"
+        case .disk525Sector13: return "5.25\" disk, 13 sectors (DOS 3.2)"
+        case .disk35: return "3.5\" disk"
+        }
+    }
+
+    /// Tracks that held fewer readable sectors than they should, e.g. "1, 3, 5, 34"
+    private var unreadTracks: String? {
+        let tracks = woz.tracks.filter { $0.decoded < $0.expected }
+        guard !tracks.isEmpty else { return nil }
+        let names = tracks.map { woz.kind == .disk35 ? "\($0.track)/\($0.side)" : "\($0.track)" }
+        return names.count > 20 ? names.prefix(20).joined(separator: ", ") + " … (\(names.count) tracks)"
+                                : names.joined(separator: ", ")
+    }
+
+    var body: some View {
+        Group {
+            InfoRow(label: "WOZ", value: "Version \(woz.version), \(diskKind)")
+            if !woz.info.creator.isEmpty {
+                InfoRow(label: "Made With", value: woz.info.creator)
+            }
+            InfoRow(label: "Sectors Read", value: "\(woz.sectorsDecoded) of \(woz.sectorsExpected)")
+            if let tracks = unreadTracks {
+                InfoRow(label: "Unread Tracks", value: tracks)
+            }
+            InfoRow(label: "Checksum", value: woz.checksumMatches ? "OK" : "Does not match the contents")
+            if woz.info.isWriteProtected {
+                InfoRow(label: "Write Protected", value: "Yes")
+            }
+            let known = Set(Self.metaLabels.map(\.key))
+            ForEach(Self.metaLabels.filter { !(woz.metadata[$0.key] ?? "").isEmpty }, id: \.key) { item in
+                InfoRow(label: item.label, value: woz.metadata[item.key] ?? "")
+            }
+            ForEach(woz.metadata.keys.filter { !known.contains($0) && !(woz.metadata[$0] ?? "").isEmpty }.sorted(), id: \.self) { key in
+                InfoRow(label: key.replacingOccurrences(of: "_", with: " ").capitalized, value: woz.metadata[key] ?? "")
+            }
+        }
+    }
 }

@@ -124,6 +124,15 @@ struct DiskBrowserPane: View {
                     ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
                 })
 
+                // A WOZ disk whose tracks could not all be read (copy protection or damage)
+                if let woz = viewModel.wozImage, woz.sectorsDecoded < woz.sectorsExpected {
+                    Label("\(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors read", systemImage: "exclamationmark.triangle")
+                        .font(skin.font(11))
+                        .foregroundColor(.orange)
+                        .fixedSize()
+                        .help("Some tracks could not be read, usually because of copy protection. Files stored there come out as zeros. Disk Image Info (⌥⌘I) lists the tracks.")
+                }
+
                 // Back button and current path
                 HStack(spacing: 8) {
                     Button(action: {

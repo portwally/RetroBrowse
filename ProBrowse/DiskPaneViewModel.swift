@@ -419,10 +419,6 @@ class DiskPaneViewModel: ObservableObject {
             showError(title, "\(name): \(error.localizedDescription)")
             return
         }
-        guard woz.checksumMatches else {
-            showError(title, "\(name) is damaged: its checksum does not match its contents.")
-            return
-        }
         print("💾 WOZ \(woz.version) image: \(woz.kind), \(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors decoded")
         let decoded = "\(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors could be read."
         if woz.kind == .disk525Sector13 {
@@ -437,13 +433,20 @@ class DiskPaneViewModel: ObservableObject {
             }
             if let catalog = catalog {
                 finishLoading(catalog, from: url, isArchiveBacked: true, woz: woz)
+                // The checksum covers the whole file; the sectors have checksums of their own,
+                // so a mismatch is worth a warning rather than refusing the disk
+                if !woz.checksumMatches {
+                    showError("WOZ Image May Be Damaged",
+                              "The checksum of \(name) does not match its contents. It was opened anyway, but some files may be damaged.")
+                }
                 return
             }
         }
+        let damaged = woz.checksumMatches ? "" : " Its checksum does not match its contents either."
         if woz.sectorsDecoded == woz.sectorsExpected {
-            showError(title, "No ProDOS, DOS 3.3 or Pascal file system was found on \(name). \(decoded)")
+            showError(title, "No ProDOS, DOS 3.3 or Pascal file system was found on \(name). \(decoded)\(damaged)")
         } else {
-            showError(title, "No standard file system was found on \(name). This disk may be copy-protected. \(decoded)")
+            showError(title, "No standard file system was found on \(name). This disk may be copy-protected. \(decoded)\(damaged)")
         }
     }
 

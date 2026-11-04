@@ -495,7 +495,7 @@ All CRCs were good and the META chunk gives title, publisher, year etc. for free
       Second step.
 - [x] Copy-protected disks: open what decodes; if no file system is found, say so and show
       META plus a per-track sector count instead of an error.
-- [ ] Show META (title, publisher, developer, year, requirements) in the pane header /
+- [x] Show META (title, publisher, developer, year, requirements) in the pane header /
       image inspector.
 - [x] Read-only at first. Writing means re-encoding tracks into bit streams and fixing
       the CRC; possible for standard disks, but a later decision.
@@ -511,5 +511,6 @@ All CRCs were good and the META chunk gives title, publisher, year etc. for free
 - Real files: DOS 3.3 System Master 560/560 (19 files); 2400 A.D. disks 288/560 and 560/560
   (52 and 124 files); Utopia 238/560 (26 files); 4am WOZ1 cracks 544/560 (track 34 unformatted).
 - Open: 3.5" is only round-trip tested (no real 3.5" WOZ here). 13-sector disks decode but
-  there is no DOS 3.2 catalog parser. META isn't shown in the UI yet. Partly readable disks
-  open without a warning; a bad CRC is refused.
+  there is no DOS 3.2 catalog parser.
+- Follow-up: partly read disks show "N of M sectors read" in the pane header; a bad CRC
+  opens with a warning; Disk Image Info shows the WOZ details, unread tracks and META.

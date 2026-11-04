@@ -1511,7 +1511,7 @@ do {
     check(prot.catalog == nil && errors.count == 1 && errors[0].contains("copy-protected") && errors[0].contains("0 of 560"),
           "an undecodable disk explains itself, got \(errors)")
 
-    // A bad CRC is refused; a CRC of 0 means none was stored
+    // A bad CRC opens with a warning; a CRC of 0 means none was stored
     var badCRC = woz2
     badCRC[2000] ^= 0x01
     check((try? WOZImage(data: badCRC))?.checksumMatches == false, "a CRC mismatch is reported")
@@ -1519,7 +1519,7 @@ do {
     try! badCRC.write(to: badURL)
     errors = []
     let bad = makePane(badURL) { errors.append($0) }
-    check(bad.catalog == nil && errors.first?.contains("checksum") == true, "a WOZ with a bad CRC is refused, got \(errors)")
+    check(bad.catalog != nil && errors.count == 1 && errors[0].contains("checksum"), "a WOZ with a bad CRC opens with a warning, got \(errors)")
     var noCRC = woz2
     noCRC.replaceSubrange(8..<12, with: [0, 0, 0, 0])
     check((try? WOZImage(data: noCRC))?.checksumMatches == true, "a CRC of 0 is accepted")
