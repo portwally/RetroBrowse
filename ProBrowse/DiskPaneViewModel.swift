@@ -442,8 +442,14 @@ class DiskPaneViewModel: ObservableObject {
         showError(title, lines.joined(separator: "\n"))
     }
     
+    /// Images that only arrived as data and were opened from a temporary copy
+    private var temporaryCopies: Set<URL> = []
+
     /// Why this disk cannot be modified, or nil if it can
     private var writeBlockedReason: String? {
+        if let path = diskImagePath, temporaryCopies.contains(path) {
+            return "This disk image was dropped as a copy, so changes could not be saved to the original. Open it with Open Left or Open Right to change it."
+        }
         if isUCSDPascal {
             return "UCSD Pascal disks are read-only."
         }
@@ -469,7 +475,7 @@ class DiskPaneViewModel: ObservableObject {
     
     /// Drops entries that sit inside a directory which is itself in the list,
     /// so a directory and its contents are handled once
-    private func topLevelEntries(_ entries: [DiskCatalogEntry]) -> [DiskCatalogEntry] {
+    func topLevelEntries(_ entries: [DiskCatalogEntry]) -> [DiskCatalogEntry] {
         let directoryPaths = entries.filter { $0.isDirectory }.map { $0.directoryPath }
         return entries.filter { entry in
             !directoryPaths.contains { entry.parentPath.hasPrefix($0) }
@@ -838,7 +844,7 @@ class DiskPaneViewModel: ObservableObject {
             var exportedCount = 0
             var failures: [String] = []
             for entry in entriesToExport {
-                exportedCount += exportEntry(entry, to: exportFolder, failures: &failures)
+                exportedCount += Self.exportEntry(entry, to: exportFolder, failures: &failures)
             }
             
             print("🎉 Export completed: \(exportedCount) files")
@@ -853,7 +859,34 @@ class DiskPaneViewModel: ObservableObject {
     
     // MARK: - Recursive Export Helper
     
-    private func exportEntry(_ entry: DiskCatalogEntry, to parentFolder: URL, failures: inout [String]) -> Int {
+    /// Writes entries dragged to Finder into a new temporary folder and returns what Finder
+    /// should receive: the file or folder itself, or a folder named after the disk holding them all
+    static func exportForDrag(_ entries: [DiskCatalogEntry], diskName: String) -> URL? {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RetroBrowse Drag \(UUID().uuidString)")
+        var failures: [String] = []
+        let target = entries.count == 1 ? folder : folder.appendingPathComponent(diskName)
+        guard (try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)) != nil else { return nil }
+        for entry in entries {
+            _ = exportEntry(entry, to: target, failures: &failures)
+        }
+        let result = entries.count == 1 ? folder.appendingPathComponent(exportFilename(for: entries[0])) : target
+        return FileManager.default.fileExists(atPath: result.path) ? result : nil
+    }
+
+    /// Name of an exported file: the ProDOS name, with an extension added if it has none
+    static func exportFilename(for entry: DiskCatalogEntry) -> String {
+        guard !entry.isDirectory, !entry.name.contains(".") else { return entry.name }
+        switch entry.fileType {
+        // ProDOS file types (DOS 3.3 entries carry them too)
+        case 0x04: return entry.name + ".txt"
+        case 0x06: return entry.name + ".bin"
+        case 0xFA, 0xFC: return entry.name + ".bas"
+        default: return entry.name + ".dat"
+        }
+    }
+
+    private static func exportEntry(_ entry: DiskCatalogEntry, to parentFolder: URL, failures: inout [String]) -> Int {
         var count = 0
         
         if entry.isDirectory {
@@ -875,18 +908,7 @@ class DiskPaneViewModel: ObservableObject {
             }
         } else {
             // Export file
-            var filename = entry.name
-            
-            // Add extension if missing
-            if !filename.contains(".") {
-                switch entry.fileType {
-                // ProDOS file types (DOS 3.3 entries carry them too)
-                case 0x04: filename += ".txt"
-                case 0x06: filename += ".bin"
-                case 0xFA, 0xFC: filename += ".bas"
-                default: filename += ".dat"
-                }
-            }
+            let filename = exportFilename(for: entry)
             
             let fileURL = parentFolder.appendingPathComponent(filename)
             do {
@@ -966,6 +988,7 @@ class DiskPaneViewModel: ObservableObject {
             if (try? files[index].data.write(to: tempURL)) != nil {
                 openable = tempURL
                 otherFiles.remove(at: index)
+                temporaryCopies.insert(tempURL)
             }
         }
         guard let image = openable else {

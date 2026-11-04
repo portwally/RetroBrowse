@@ -181,7 +181,7 @@ struct DiskBrowserPane: View {
         }
         .background(
             Color.clear
-                .onDrop(of: [.fileURL, .plainText, .item, .data], isTargeted: $isTargeted) { providers in
+                .onDrop(of: Self.droppableTypes, isTargeted: $isTargeted) { providers in
                     handleDrop(providers: providers)
                 }
         )
@@ -300,26 +300,23 @@ struct DiskBrowserPane: View {
     
     private func createDragProvider(for entry: DiskCatalogEntry) -> NSItemProvider {
         // Dragging a selected row takes the whole selection; any other row is dragged on its own
-        let selectedEntries = viewModel.isSelected(entry) ? viewModel.getSelectedEntries() : [entry]
-        
-        // Encode to JSON string, tagged with the image the entries come from
-        do {
-            let payload = DragPayload(sourceImagePath: viewModel.diskImagePath?.path ?? "", entries: selectedEntries)
-            let jsonData = try JSONEncoder().encode(payload)
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                print("📦 Encoded JSON (\(jsonString.count) chars)")
-                print("   First 100 chars: \(String(jsonString.prefix(100)))")
-                let provider = NSItemProvider(object: jsonString as NSString)
-                provider.suggestedName = "probrowse-entries"
-                return provider
-            } else {
-                print("❌ Failed to create string from JSON data")
+        let entries = viewModel.isSelected(entry) ? viewModel.topLevelEntries(viewModel.getSelectedEntries()) : [entry]
+
+        // For Finder: the files themselves, written to a temporary folder (Finder only takes
+        // a drag from a SwiftUI view when it carries a real file)
+        let diskName = viewModel.catalog?.diskName ?? "Disk"
+        let provider = DiskPaneViewModel.exportForDrag(entries, diskName: diskName)
+            .map { NSItemProvider(object: $0 as NSURL) } ?? NSItemProvider()
+
+        // For the other pane: the entries, tagged with the image they come from
+        let payload = DragPayload(sourceImagePath: viewModel.diskImagePath?.path ?? "", entries: entries)
+        if let json = try? JSONEncoder().encode(payload) {
+            provider.registerDataRepresentation(forTypeIdentifier: DragPayload.typeIdentifier, visibility: .all) { completion in
+                completion(json, nil)
+                return nil
             }
-        } catch {
-            print("❌ JSON Encoding error: \(error)")
         }
-        
-        return NSItemProvider()
+        return provider
     }
     
     // MARK: - Empty State View
@@ -341,7 +338,7 @@ struct DiskBrowserPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             Color.clear
-                .onDrop(of: [.fileURL, .plainText, .item, .data], isTargeted: $isTargeted) { providers in
+                .onDrop(of: Self.droppableTypes, isTargeted: $isTargeted) { providers in
                     handleDrop(providers: providers)
                 }
         )
@@ -349,41 +346,37 @@ struct DiskBrowserPane: View {
     
     // MARK: - Drop Handler
 
+    /// What a pane accepts. SwiftUI only hands over the types listed here, so the
+    /// entries dragged from a pane must be named or they arrive as exported files.
+    private static let droppableTypes: [UTType] = [DragPayload.type, .fileURL, .plainText, .item, .data]
+
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
         print("📥 DROP: Received \(providers.count) providers")
         for (i, provider) in providers.enumerated() {
             print("   Provider \(i): \(provider.registeredTypeIdentifiers)")
         }
 
-        // Legacy inter-pane format - kept for backward compatibility
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier("com.probrowse.entries") {
-                print("📦 DROP: Found legacy com.probrowse.entries")
-                provider.loadDataRepresentation(forTypeIdentifier: "com.probrowse.entries") { data, error in
-                    DispatchQueue.main.async {
-                        guard error == nil,
-                              let data = data,
-                              let wrapper = try? JSONDecoder().decode(DraggedEntriesWrapper.self, from: data) else {
-                            print("❌ DROP: Failed to decode legacy entries")
-                            return
-                        }
-                        print("✅ DROP: Decoded \(wrapper.entries.count) legacy entries")
-                        self.viewModel.importEntries(wrapper.entries, from: self.targetViewModel)
-                    }
+        // Entries dragged from a pane
+        if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(DragPayload.typeIdentifier) }) {
+            provider.loadDataRepresentation(forTypeIdentifier: DragPayload.typeIdentifier) { data, _ in
+                DispatchQueue.main.async {
+                    guard let payload = data.flatMap({ try? JSONDecoder().decode(DragPayload.self, from: $0) }) else { return }
+                    // Dropping entries back onto the image they came from would only duplicate them
+                    guard payload.sourceImagePath != self.viewModel.diskImagePath?.path else { return }
+                    self.viewModel.importEntries(payload.entries, from: self.targetViewModel)
                 }
-                return true
             }
+            return true
         }
 
         guard !providers.isEmpty else { return false }
 
         // Everything else is loaded first and sorted out afterwards: a drop can carry file
-        // URLs, files that only come as data (Finder gives a text file that way), text
-        // dragged from another app, or the JSON of entries dragged from the other pane.
+        // URLs, files that only come as data (Finder gives a text file that way), or text
+        // dragged from another app.
         let group = DispatchGroup()
         var droppedURLs: [URL] = []
         var droppedFiles: [ImportedFile] = []
-        var payload: DragPayload?
 
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
@@ -398,18 +391,24 @@ struct DiskBrowserPane: View {
                 }
             } else if let type = provider.registeredTypeIdentifiers.first {
                 group.enter()
-                provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
-                    // The temporary file is removed when this block returns, so read it now
+                // Finder can hand over a file under a type another app declares (Virtual II
+                // claims .hdv) without a file URL. Asking for the file in place gets the
+                // original, so changes are saved to it rather than to a temporary copy.
+                provider.loadInPlaceFileRepresentation(forTypeIdentifier: type) { url, isInPlace, _ in
+                    if let url = url, isInPlace {
+                        DispatchQueue.main.async {
+                            droppedURLs.append(url)
+                            group.leave()
+                        }
+                        return
+                    }
+                    // A copy is removed when this block returns, so read it now
                     let file = url.flatMap { url in
                         (try? Data(contentsOf: url)).map { ImportedFile(filename: url.lastPathComponent, data: $0) }
                     }
                     DispatchQueue.main.async {
                         if let file = file {
-                            if let decoded = try? JSONDecoder().decode(DragPayload.self, from: file.data) {
-                                payload = decoded
-                            } else {
-                                droppedFiles.append(file)
-                            }
+                            droppedFiles.append(file)
                         }
                         group.leave()
                     }
@@ -418,16 +417,6 @@ struct DiskBrowserPane: View {
         }
 
         group.notify(queue: .main) {
-            if let payload = payload {
-                // Dropping entries back onto the image they came from would only duplicate them
-                guard payload.sourceImagePath != self.viewModel.diskImagePath?.path else {
-                    print("↩️ DROP: Ignoring drop onto the source pane")
-                    return
-                }
-                self.viewModel.importEntries(payload.entries, from: self.targetViewModel)
-                return
-            }
-
             self.viewModel.dropFiles(droppedURLs, and: droppedFiles)
         }
 
@@ -439,34 +428,12 @@ struct DiskBrowserPane: View {
 
 /// What travels between panes in a drag: the entries and the image they came from
 struct DragPayload: Codable {
+    /// Only RetroBrowse reads this type; other apps take the exported files
+    static let typeIdentifier = "com.probrowse.entries"
+    static let type = UTType(exportedAs: typeIdentifier, conformingTo: .data)
+
     let sourceImagePath: String
     let entries: [DiskCatalogEntry]
-}
-
-// MARK: - Dragged Entries Wrapper
-
-class DraggedEntriesWrapper: NSObject, NSItemProviderWriting, Codable {
-    let entries: [DiskCatalogEntry]
-    
-    init(entries: [DiskCatalogEntry]) {
-        self.entries = entries
-    }
-    
-    static var writableTypeIdentifiersForItemProvider: [String] {
-        ["com.probrowse.entries"]
-    }
-    
-    func loadData(withTypeIdentifier typeIdentifier: String, forItemProviderCompletionHandler completionHandler: @escaping (Data?, Error?) -> Void) -> Progress? {
-        if typeIdentifier == "com.probrowse.entries" {
-            do {
-                let data = try JSONEncoder().encode(self)
-                completionHandler(data, nil)
-            } catch {
-                completionHandler(nil, error)
-            }
-        }
-        return nil
-    }
 }
 
 // MARK: - Column Headers View

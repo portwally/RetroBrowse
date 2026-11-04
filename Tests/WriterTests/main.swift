@@ -588,6 +588,15 @@ do {
     empty.chooseDropAction = { name, canUnpack in asked.append((name, canUnpack)); return .copy }
     empty.dropFiles([url])
     check(asked.isEmpty && empty.diskImagePath == url, "an empty pane opens a dropped archive directly")
+
+    // A disk image that arrived only as data opens from a copy, which must not take changes
+    var copyErrors: [String] = []
+    let fromData = DiskPaneViewModel()
+    fromData.presentError = { title, _ in copyErrors.append(title) }
+    fromData.dropFiles([], and: [ImportedFile(filename: "dropped.po", data: try! Data(contentsOf: diskURL))])
+    check(fromData.catalog != nil && fromData.diskImagePath != diskURL, "an image dropped as data opens from a copy")
+    fromData.importRawData(bytes(10, seed: 5), filename: "NEW", fileType: 0x06, auxType: 0)
+    check(copyErrors == ["Cannot Import"], "the copy is read-only, got \(copyErrors)")
 }
 
 // MARK: - Archives: checksums, squeeze, LZW and dates
