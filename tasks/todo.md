@@ -405,7 +405,7 @@ type and aux type, and for MOD files the song and sample texts, also editable.
 
 ---
 
-# Plan: onboarding on first launch (2026-11-04) — plan only, not started
+# Plan: onboarding on first launch (2026-11-04) — built
 
 Goal: a first launch that explains in under a minute what RetroBrowse does, makes the
 backup warning impossible to miss, and gets the user to an open disk.
@@ -438,13 +438,21 @@ backup warning impossible to miss, and gets the user to an open disk.
 
 ## Work
 
-- [ ] `OnboardingView` (pages, navigation, keyboard), shown from `ContentView` when the
+- [x] `OnboardingView` (pages, navigation, keyboard), shown from `ContentView` when the
       stored version is lower than the current one.
-- [ ] Illustrations: SF Symbols plus the two skin screenshots already in docs/screenshots
+- [x] Illustrations: SF Symbols plus the two skin screenshots already in docs/screenshots
       (small, so the app doesn't grow much); no new artwork needed for a first version.
-- [ ] Help menu item to show it again; Settings › "Show welcome on next launch" not needed.
-- [ ] Verify: `defaults delete portwally.ProBrowse onboardingVersion`, launch, step
+- [x] Help menu item to show it again; Settings › "Show welcome on next launch" not needed.
+- [x] Verify: `defaults delete portwally.ProBrowse onboardingVersion`, launch, step
       through every page in each skin, Skip, Open a Disk…, and relaunch (not shown again).
+
+## Review
+
+- Built as `OnboardingView`; skin thumbnails are drawn live in each skin's colours and font
+  instead of screenshots, so nothing was added to the bundle.
+- Skip jumps to the backup page until "I understand" is ticked; after that it closes.
+- Checked in the app: first launch, Skip, the disabled Next, choosing IIGS 640 applies at
+  once, Start, no welcome on relaunch, Help › Welcome to RetroBrowse shows it again.
 
 ## Questions for later
 

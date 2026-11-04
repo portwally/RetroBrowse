@@ -17,6 +17,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
     case fileTypes = "File Types"
     case shortcuts = "Keyboard Shortcuts"
     case graphics = "Graphics Preview"
+    case sound = "Sound & Music"
     case troubleshooting = "Troubleshooting"
 
     var id: String { rawValue }
@@ -30,6 +31,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .fileTypes: return "tag"
         case .shortcuts: return "keyboard"
         case .graphics: return "photo"
+        case .sound: return "speaker.wave.2"
         case .troubleshooting: return "wrench.and.screwdriver"
         }
     }
@@ -83,6 +85,8 @@ struct HelpWindow: View {
             ShortcutsHelpView()
         case .graphics:
             GraphicsHelpView()
+        case .sound:
+            SoundHelpView()
         case .troubleshooting:
             TroubleshootingHelpView()
         }
@@ -442,6 +446,46 @@ struct GraphicsHelpView: View {
             }
 
             HelpNote("Graphics detection is based on file type and aux type. Some files may not be recognized automatically.")
+        }
+    }
+}
+
+// MARK: - Sound & Music Help
+
+struct SoundHelpView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HelpTitle("Sound & Music")
+
+            Text("RetroBrowse plays Apple IIgs sounds and music right in the inspector and the preview pane.")
+                .helpBody()
+
+            HelpSection("Playing") {
+                HelpBullet("Select a sound or song and press **Space**, or turn on **Preview** for the other pane: it starts playing on its own")
+                HelpBullet("**Play** starts it again from the beginning, **Stop** ends it; moving to another file stops it too")
+                HelpBullet("Songs are rendered on the Mac first, so a long song takes a moment before it starts; at most the first 10 minutes are played")
+            }
+
+            HelpSection("Sounds") {
+                HelpBullet("**Sampled sounds** ($D8) - Apple IIgs sound files, including sounds kept as rSoundSample resources in a resource fork")
+                HelpBullet("**ASIF instruments** ($D8/$0002) - each wave in the instrument is listed and can be played")
+                HelpBullet("**HyperStudio sounds** ($D8/$8001)")
+                HelpBullet("**AIFF and AIFF-C** ($D8/$0000-$0001) - played as they are")
+            }
+
+            HelpSection("Music") {
+                HelpBullet("**SoundSmith songs** ($D5/$0007) - need their instruments in the same folder: a wave bank, usually named like the song with .W added, or the separate ASIF instrument files the song names (SoundSmith 1.0)")
+                HelpBullet("**NinjaTracker Plus songs** ($D5/$0008)")
+                HelpBullet("**MOD tracker modules** - ProTracker, NoiseTracker and similar, 4 to 32 channels, found by their contents whatever their file type")
+                HelpBullet("**Standard MIDI files** ($D7) - played with the Mac's built-in General MIDI instruments")
+            }
+
+            HelpSection("MOD Song Texts") {
+                HelpBullet("In the preview pane, the **Song** tab shows a MOD file's title and its 31 sample names, where musicians leave their name, greetings and notes")
+                HelpBullet("Edit them and click **Save**; each field keeps its fixed width (20 characters for the title, 22 for a sample name)")
+            }
+
+            HelpNote("MIDI Synth wave banks ($D8/$0004) and SoundSmith songs without their instruments can't be played. The inspector says what is missing.")
         }
     }
 }

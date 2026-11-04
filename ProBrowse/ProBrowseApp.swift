@@ -81,6 +81,10 @@ struct ProBrowseApp: App {
                 }
                 .keyboardShortcut("?", modifiers: .command)
 
+                Button("Welcome to RetroBrowse") {
+                    NotificationCenter.default.post(name: .showWelcome, object: nil)
+                }
+
                 Divider()
 
                 Button("Visit RetroBrowse on GitHub") {
@@ -107,4 +111,5 @@ extension NSNotification.Name {
     static let openDiskImage = NSNotification.Name("openDiskImage")
     static let showHelp = NSNotification.Name("showHelp")
     static let showDiskImageInfo = NSNotification.Name("showDiskImageInfo")
+    static let showWelcome = NSNotification.Name("showWelcome")
 }

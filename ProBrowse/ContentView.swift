@@ -16,6 +16,8 @@ struct ContentView: View {
     @State private var inspectorPane: PaneLocation? = nil
     @State private var keyboardMonitor: Any? = nil
     @State private var hostWindow: NSWindow? = nil
+    @State private var showingOnboarding = false
+    @AppStorage(OnboardingView.storageKey) private var seenOnboardingVersion = 0
     
     enum PaneLocation: Identifiable {
         case left, right
@@ -92,6 +94,18 @@ struct ContentView: View {
         .sheet(isPresented: $showingCreateImageSheet) {
             CreateImageSheet()
         }
+        .sheet(isPresented: $showingOnboarding) {
+            OnboardingView { openDisk in
+                showingOnboarding = false
+                if openDisk {
+                    // After the sheet has gone, so the file picker can attach to the window
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { leftPaneVM.showingFilePicker = true }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showWelcome)) { _ in
+            showingOnboarding = true
+        }
         .sheet(item: $inspectorPane) { pane in
             ImageInspectorSheet(viewModel: pane == .left ? leftPaneVM : rightPaneVM)
         }
@@ -118,6 +132,11 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            // The welcome on first launch, or after it has changed
+            if seenOnboardingVersion < OnboardingView.currentVersion {
+                showingOnboarding = true
+            }
+
             // Guard against duplicate registration
             if keyboardMonitor != nil { return }
             // Setup keyboard shortcuts
