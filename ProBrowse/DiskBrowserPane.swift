@@ -24,16 +24,21 @@ struct DiskBrowserPane: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            if !hideHeader {
-                headerView
-            }
-            
-            // Browser Content
-            if let catalog = viewModel.catalog {
-                browserContentView(catalog: catalog)
+            if viewModel.isPreviewing {
+                // Shows the file highlighted in the other pane; this pane's disk stays open
+                PreviewPaneView(source: targetViewModel)
             } else {
-                emptyStateView
+                // Header
+                if !hideHeader {
+                    headerView
+                }
+                
+                // Browser Content
+                if let catalog = viewModel.catalog {
+                    browserContentView(catalog: catalog)
+                } else {
+                    emptyStateView
+                }
             }
         }
         // The whole pane takes the click, empty space below the file list included
@@ -41,8 +46,11 @@ struct DiskBrowserPane: View {
         .background(skin.paneBackground)
         .contentShape(Rectangle())
         .onTapGesture {
-            // Set this pane as active when clicked
-            focusManager.setActivePane(paneId)
+            // Set this pane as active when clicked. A preview never takes over: the other
+            // pane would lose its selection and with it the file being previewed.
+            if !viewModel.isPreviewing {
+                focusManager.setActivePane(paneId)
+            }
         }
         .onChange(of: focusManager.activePaneId) { oldValue, newValue in
             // Clear selection when this pane loses focus

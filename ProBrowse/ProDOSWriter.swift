@@ -1530,4 +1530,74 @@ guard let volume = self.locateVolume(Data(referencing: diskData)) else {
             }
         }
     }
+
+    // MARK: - Replace File Data
+
+    /// Overwrites a file's data in its own blocks, for edits that keep the size (such as the
+    /// texts in a MOD file). The file keeps its blocks, place and creation date; the
+    /// modification date is set to now. Refuses a different size, an extended or sparse file.
+    func replaceFileData(diskImagePath: URL, fileName: String, parentPath: String, data newData: Data, completion: @escaping (Bool, String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let finish: (Bool, String) -> Void = { ok, message in DispatchQueue.main.async { completion(ok, message) } }
+            guard let diskData = NSMutableData(contentsOf: diskImagePath) else { return finish(false, "Could not read disk image") }
+            guard let volume = self.locateVolume(Data(referencing: diskData)) else { return finish(false, "Not a ProDOS volume") }
+            let dataOffset = volume.dataOffset, isDOSOrder = volume.isDOSOrder
+
+            guard let parentDirBlock = self.findDirectoryBlock(diskData, path: parentPath, dataOffset: dataOffset, isDOSOrder: isDOSOrder),
+                  let (entryBlock, entryOffset) = self.findEntry(Data(referencing: diskData), directoryBlock: parentDirBlock, fileName: fileName, dataOffset: dataOffset, isDOSOrder: isDOSOrder),
+                  var entry = self.readBlock(Data(referencing: diskData), blockIndex: entryBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else {
+                return finish(false, "File '\(fileName)' not found")
+            }
+
+            let storageType = entry[entryOffset] >> 4
+            let keyBlock = Int(entry[entryOffset + 0x11]) | Int(entry[entryOffset + 0x12]) << 8
+            let eof = Int(entry[entryOffset + 0x15]) | Int(entry[entryOffset + 0x16]) << 8 | Int(entry[entryOffset + 0x17]) << 16
+            guard (1...3).contains(storageType) else { return finish(false, "Only plain files can be changed in place") }
+            guard eof == newData.count else { return finish(false, "The new data is \(newData.count) bytes, the file \(eof)") }
+
+            // The data blocks in file order
+            let needed = max(1, (eof + 511) / 512)
+            func pointers(_ indexBlock: Int) -> [Int]? {
+                guard let index = self.readBlock(Data(referencing: diskData), blockIndex: indexBlock, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else { return nil }
+                return (0..<256).map { Int(index[$0]) | Int(index[256 + $0]) << 8 }
+            }
+            var blocks: [Int]
+            switch storageType {
+            case 1: blocks = [keyBlock]
+            case 2: blocks = pointers(keyBlock) ?? []
+            default:
+                guard let master = pointers(keyBlock) else { return finish(false, "Could not read the file's index") }
+                blocks = []
+                for indexBlock in master.prefix((needed + 255) / 256) {
+                    guard indexBlock != 0, let list = pointers(indexBlock) else { return finish(false, "Sparse files can't be changed in place") }
+                    blocks += list
+                }
+            }
+            blocks = Array(blocks.prefix(needed))
+            guard blocks.count == needed, !blocks.contains(0) else { return finish(false, "Sparse files can't be changed in place") }
+
+            for (i, block) in blocks.enumerated() {
+                var chunk = newData.subdata(in: i * 512..<min((i + 1) * 512, newData.count))
+                chunk.append(Data(count: 512 - chunk.count))
+                guard self.writeBlock(diskData, blockIndex: block, blockData: chunk, dataOffset: dataOffset, isDOSOrder: isDOSOrder) else {
+                    return finish(false, "Could not write block \(block)")
+                }
+            }
+
+            // Modification date and time at +$21
+            let stamp = self.proDOSDateTimeNow()
+            entry[entryOffset + 0x21] = UInt8(stamp.date & 0xFF)
+            entry[entryOffset + 0x22] = UInt8(stamp.date >> 8)
+            entry[entryOffset + 0x23] = UInt8(stamp.time & 0xFF)
+            entry[entryOffset + 0x24] = UInt8(stamp.time >> 8)
+            _ = self.writeBlock(diskData, blockIndex: entryBlock, blockData: entry, dataOffset: dataOffset, isDOSOrder: isDOSOrder)
+
+            do {
+                try diskData.write(to: diskImagePath, options: .atomic)
+                finish(true, "File saved")
+            } catch {
+                finish(false, "Error: \(error.localizedDescription)")
+            }
+        }
+    }
 }

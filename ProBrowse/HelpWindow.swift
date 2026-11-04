@@ -221,6 +221,15 @@ struct FileInspectorHelpView: View {
                 HelpBullet("While it is open, **Up** and **Down** move to the file above or below, and the inspector shows that file")
             }
 
+            HelpSection("Preview Pane") {
+                HelpBullet("Click **Preview** above a pane to turn it into a live preview of the file selected in the other pane; click it again to get that pane's disk back")
+                HelpBullet("It follows clicks and the arrow keys, and shows the content, every directory field and a hex dump")
+                HelpBullet("**Info** - Change the file type and aux type, picking from the known types or typing hex, then Apply")
+                HelpBullet("**Resources** - Every resource in a IIgs resource fork, with its type name, ID and size; pick one to see its bytes")
+                HelpBullet("**Song** - The title and sample names of a MOD file, where musicians leave their credits; edit them and Save (fields keep their fixed widths)")
+                HelpBullet("Changes need a ProDOS disk that isn't read-only")
+            }
+
             HelpSection("Content Tab") {
                 HelpBullet("**BASIC Programs** - Detokenized listing with syntax highlighting")
                 HelpBullet("**Merlin Assembler** - 6502 source code with column formatting")

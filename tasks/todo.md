@@ -354,3 +354,142 @@ this has been built or run yet.
 ## File type table in Help (2026-11-03)
 - [x] ProDOSFileTypes converted from nested switches to tables (same answer for all 16.7M type/aux pairs, checked)
 - [x] Help > File Types: all 277 entries with a Read checkmark (InspectorSupport mirrors the inspector and decoders), filter field
+
+---
+
+# Feature: the other pane as a live preview (2026-11-04)
+
+Goal: with a volume open in one pane, the other pane can show a preview of the file
+highlighted there: content, every directory field, the resource fork, editable file
+type and aux type, and for MOD files the song and sample texts, also editable.
+
+## Plan
+
+- [x] **Preview mode per pane.** A toggle that turns a pane into the preview of the other
+      pane's highlighted file (the disk it had stays loaded underneath and comes back when
+      the toggle is off). Follows clicks and arrow keys; with several selected, shows the
+      last one clicked.
+- [x] **Reuse the inspector.** Pull the content renderer out of `FileInspectorSheet` into a
+      view both the sheet and the pane use, so every viewer (text, BASIC, graphics, fonts,
+      sound, Teach, AppleWorks…) works in the pane without duplication.
+- [x] **Info section.** Name, path, file type and aux type with names, storage type, data
+      and resource fork sizes, blocks, created and modified dates, access bits.
+- [x] **Edit type and aux.** Type picker (from the File Types table) plus hex aux field and
+      Apply, through the existing `changeFileType`. Disabled with the reason on read-only
+      disks (archives, DiskCopy, Pascal) and on DOS 3.3 (its types don't map to aux types).
+- [x] **Resource fork.** New `ResourceForkParser`: read the IIgs resource map and list
+      each resource (type with its name, e.g. $8001 rIcon, ID, size); selecting one shows
+      its bytes in hex.
+- [x] **MOD metadata.** New `MODMetadata`: song title (20 chars), the 31 sample names
+      (22 chars each; authors usually write their notes there), format tag, channels,
+      patterns. Detected by content, whatever the ProDOS type.
+- [x] **Edit MOD texts.** Fields for title and sample names, limited to their fixed
+      widths and ASCII; Save writes the file back at the same size through a new
+      `ProDOSWriter.replaceFileData` that overwrites the file's own blocks in place (keeps
+      dates, blocks and position).
+- [x] **Tests.** MOD read/write round trip, `replaceFileData` leaves other files intact
+      and refuses a size change, resource map parsing, type change from the preview.
+- [x] **Verify in the app**, both panes as preview, on NEWDISK.po (MODs) and System.hdv
+      (resource forks).
+
+## Review
+
+- Built as planned. The preview pane reuses `FileContentView`, `FileInfoView` and `HexDumpView`.
+- A preview pane never takes focus: the source pane clears its selection when it loses focus,
+  which would empty the preview.
+- A reload after a change now keeps the same files selected (matched by path), so the
+  preview stays on the edited file.
+- `changeFileType` is now refused on DOS 3.3 (it used the ProDOS writer there).
+- Tests: 357 checks. Checked in the app on copies of NEWDISK.po (Song edit saved and found
+  on disk, aux type change) and System.hdv (FINDER: 381 resources listed, bytes shown).
+
+---
+
+# Plan: onboarding on first launch (2026-11-04) — plan only, not started
+
+Goal: a first launch that explains in under a minute what RetroBrowse does, makes the
+backup warning impossible to miss, and gets the user to an open disk.
+
+## Shape
+
+- A sheet over the main window on first launch, 5 short pages with Back / Next / Skip,
+  arrow keys and Return to move. Shown again from **Help › Welcome to RetroBrowse**.
+- Remembered as `@AppStorage("onboardingVersion")`, so a later release can show only a
+  "What's new" page to people who already saw the welcome (bump the number).
+- Follows the chosen skin's colours and fonts, like the rest of the app.
+
+## Pages
+
+1. **Welcome.** App icon, one sentence: browse, copy and inspect Apple II and IIgs disk
+   images and archives on the Mac. Formats in one line (ProDOS, DOS 3.3, Pascal, ShrinkIt…).
+2. **Back up your disk images.** RetroBrowse writes straight into image files. Keep copies
+   of anything you care about, and quit emulators before changing a disk they have mounted
+   (they keep their own copy and can overwrite the change). Needs a checkbox "I understand"
+   before Next — the one page that can't be skipped past without reading.
+3. **Two panes.** Open a disk with Open Left / Open Right or by dropping it from Finder.
+   Drag files between panes to copy; drag to Finder to export; drop Mac files to import.
+   Dropping an archive on a disk asks: copy, unpack or open. Small looping illustration.
+4. **Look inside.** Space opens the inspector (Space again closes, arrows move). The
+   Preview button turns the other pane into a live preview with editable file type, aux
+   type and MOD texts. Help › File Types lists what can be read.
+5. **Pick a look.** The five skins as clickable thumbnails (System, Light, Dark, Norton
+   Commander, Apple IIGS 640); choosing one applies it at once. Then **Open a Disk…**
+   (opens the left pane's file picker) or **Start**.
+
+## Work
+
+- [ ] `OnboardingView` (pages, navigation, keyboard), shown from `ContentView` when the
+      stored version is lower than the current one.
+- [ ] Illustrations: SF Symbols plus the two skin screenshots already in docs/screenshots
+      (small, so the app doesn't grow much); no new artwork needed for a first version.
+- [ ] Help menu item to show it again; Settings › "Show welcome on next launch" not needed.
+- [ ] Verify: `defaults delete portwally.ProBrowse onboardingVersion`, launch, step
+      through every page in each skin, Skip, Open a Disk…, and relaunch (not shown again).
+
+## Questions for later
+
+- A demo disk to try things on? It would have to be our own (no copyrighted software):
+  e.g. a small ProDOS image with a text file, a picture, a MOD we're allowed to ship.
+- English only, or also German?
+
+---
+
+# Assessment: .woz images (2026-11-04)
+
+## Why it failed before
+
+The app itself never decoded WOZ. Until January `.woz` went to the ProDOS sector parser
+as if it were a sector image; that can't work, because WOZ stores the raw bit stream the
+drive head reads (GCR nibbles, sync bytes, timing), not sectors. Real WOZ reading only
+existed while the CiderPress II libraries were bundled (removed in December), and
+commit `987e54e` then dropped `.woz` from the list.
+
+## Probe (Python, 11 WOZ files on this Mac)
+
+Parsing the header, INFO, META and TRKS, then decoding 16-sector (6-and-2) tracks:
+
+| Image | Result |
+| --- | --- |
+| DOS 3.3 System Master (WOZ2) | 560 / 560 sectors |
+| 2400 A.D. disk 2 | 560 / 560 |
+| 2400 A.D. disk 1, Utopia | 288 and 238 / 560 (copy protection) |
+| DOS 3.2 System Master | 0 (13-sector disk, needs 5-and-3 decoding) |
+| 4am's WOZ1 cracks (Fantavision, Print Shop) | not probed (WOZ1 track layout) |
+
+All CRCs were good and the META chunk gives title, publisher, year etc. for free.
+
+## Verdict: feasible, read-only
+
+- [ ] `WOZImage`: WOZ1 and WOZ2 containers, CRC check, INFO and META.
+- [ ] 5.25": decode 16-sector 6-and-2 into a 140K DOS-ordered image and hand it to the
+      existing DOS 3.3 / ProDOS / Pascal parsers. Add 13-sector 5-and-3 for DOS 3.2.
+- [ ] 3.5" (800K ProDOS): Sony GCR, 12-byte tags + 512 data, variable sectors per track.
+      Second step.
+- [ ] Copy-protected disks: open what decodes; if no file system is found, say so and show
+      META plus a per-track sector count instead of an error.
+- [ ] Show META (title, publisher, developer, year, requirements) in the pane header /
+      image inspector.
+- [ ] Read-only at first. Writing means re-encoding tracks into bit streams and fixing
+      the CRC; possible for standard disks, but a later decision.
+- [ ] Test data: the DOS 3.3/3.2 System Masters from AppleCommander's test resources and
+      the images in /Applications/Emulatoren/Apple II disks/images.

@@ -41,6 +41,10 @@ struct ContentView: View {
                     onEjectRight: { rightPaneVM.ejectDisk() },
                     onInspectLeft: { leftPaneVM.inspectSelectedFile() },
                     onInspectRight: { rightPaneVM.inspectSelectedFile() },
+                    onPreviewLeft: { togglePreview(leftPaneVM, other: rightPaneVM) },
+                    onPreviewRight: { togglePreview(rightPaneVM, other: leftPaneVM) },
+                    leftIsPreviewing: leftPaneVM.isPreviewing,
+                    rightIsPreviewing: rightPaneVM.isPreviewing,
                     leftSelectionCount: leftPaneVM.selectedEntries.count,
                     rightSelectionCount: rightPaneVM.selectedEntries.count,
                     leftHasDisk: leftPaneVM.catalog != nil,
@@ -173,6 +177,19 @@ struct ContentView: View {
     }
 }
 
+extension ContentView {
+    /// Turns a pane into a preview of the other pane's highlighted file, or back. Only one
+    /// pane previews at a time, and the other one becomes the active pane.
+    fileprivate func togglePreview(_ pane: DiskPaneViewModel, other: DiskPaneViewModel) {
+        pane.isPreviewing.toggle()
+        if pane.isPreviewing {
+            other.isPreviewing = false
+            pane.selectedEntries.removeAll()
+            FocusManager.shared.setActivePane(pane === leftPaneVM ? .right : .left)
+        }
+    }
+}
+
 // MARK: - Window Reader
 
 /// Reports the window that hosts a view
@@ -206,6 +223,10 @@ struct ToolbarView: View {
     let onEjectRight: () -> Void
     let onInspectLeft: () -> Void
     let onInspectRight: () -> Void
+    let onPreviewLeft: () -> Void
+    let onPreviewRight: () -> Void
+    let leftIsPreviewing: Bool
+    let rightIsPreviewing: Bool
     let leftSelectionCount: Int
     let rightSelectionCount: Int
     let leftHasDisk: Bool
@@ -265,6 +286,13 @@ struct ToolbarView: View {
                 )
                 .help("Inspect selected file (Space or ⌘I)")
 
+                ToolbarButton(
+                    icon: leftIsPreviewing ? "eye.fill" : "eye",
+                    label: "Preview",
+                    action: onPreviewLeft
+                )
+                .help(leftIsPreviewing ? "Show this pane's disk again" : "Use this pane to preview the file selected in the right pane")
+
                 if leftSelectionCount > 0 {
                     Text("\(leftSelectionCount)")
                         .font(.caption)
@@ -294,6 +322,13 @@ struct ToolbarView: View {
                         .foregroundColor(skin.isRetro ? skin.toolbarForeground : .secondary)
                         .padding(.trailing, 4)
                 }
+
+                ToolbarButton(
+                    icon: rightIsPreviewing ? "eye.fill" : "eye",
+                    label: "Preview",
+                    action: onPreviewRight
+                )
+                .help(rightIsPreviewing ? "Show this pane's disk again" : "Use this pane to preview the file selected in the left pane")
 
                 ToolbarButton(
                     icon: "doc.text.magnifyingglass",

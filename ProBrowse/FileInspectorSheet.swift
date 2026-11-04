@@ -940,7 +940,8 @@ struct GraphicsPreviewView: View {
     @State private var imageType: AppleIIImageType = .Unknown
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var scale: Double = 2.0
+    /// Picture zoom: 0 fits the picture to the space it has; kept from file to file
+    @AppStorage("pictureScale") private var scale: Double = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -965,6 +966,7 @@ struct GraphicsPreviewView: View {
                     .font(.caption)
 
                 Picker(selection: $scale) {
+                    Text("Fit").tag(0.0)
                     Text("1x").tag(1.0)
                     Text("2x").tag(2.0)
                     Text("3x").tag(3.0)
@@ -972,7 +974,7 @@ struct GraphicsPreviewView: View {
                     EmptyView()
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 120)
+                .frame(width: 160)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -980,39 +982,49 @@ struct GraphicsPreviewView: View {
             Divider()
 
             // Image display
-            ScrollView([.horizontal, .vertical]) {
-                if isLoading {
-                    ProgressView("Decoding...")
+            if scale == 0, let image = decodedImage {
+                // Fit: as large as the space allows, keeping the picture's proportions
+                Image(decorative: image, scale: 1.0)
+                    .resizable()
+                    .interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(8)
+            } else {
+                ScrollView([.horizontal, .vertical]) {
+                    if isLoading {
+                        ProgressView("Decoding...")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let image = decodedImage {
+                        Image(decorative: image, scale: 1.0)
+                            .interpolation(.none)
+                            .scaleEffect(scale)
+                            .frame(
+                                width: CGFloat(image.width) * scale,
+                                height: CGFloat(image.height) * scale
+                            )
+                            .background(Color.black)
+                    } else if let error = errorMessage {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.badge.exclamationmark")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let image = decodedImage {
-                    Image(decorative: image, scale: 1.0)
-                        .interpolation(.none)
-                        .scaleEffect(scale)
-                        .frame(
-                            width: CGFloat(image.width) * scale,
-                            height: CGFloat(image.height) * scale
-                        )
-                        .background(Color.black)
-                } else if let error = errorMessage {
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo.badge.exclamationmark")
-                            .font(.largeTitle)
-                            .foregroundColor(.secondary)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("Unable to decode image")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo")
-                            .font(.largeTitle)
-                            .foregroundColor(.secondary)
-                        Text("Unable to decode image")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }

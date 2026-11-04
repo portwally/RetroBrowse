@@ -907,6 +907,18 @@ do {
     check(InspectorSupport.viewer(fileType: 0xD5, auxType: 0x0007) != nil && InspectorSupport.viewer(fileType: 0xD5, auxType: 0x0001) == nil,
           "SoundSmith songs are readable, MIDI Synth songs are not")
     check(rows.filter { InspectorSupport.viewer(fileType: $0.fileType, auxType: $0.auxType) != nil }.count > 40, "the table marks the readable types")
+
+    // Exported files are named with the type's short name as extension
+    func exported(_ name: String, _ type: UInt8, _ aux: UInt16 = 0) -> String {
+        let entry = DiskCatalogEntry(name: name, fileType: type, fileTypeString: "", auxType: aux, size: 0, blocks: nil,
+                                     loadAddress: nil, length: nil, data: Data(), isImage: false, isDirectory: false,
+                                     children: nil, parentPath: "/")
+        return DiskPaneViewModel.exportFilename(for: entry)
+    }
+    let names = [exported("PRODOS", 0xFF), exported("NOTES", 0x04), exported("IBMKLONE", 0xC8),
+                 exported("SONG", 0xD5, 0x0007), exported("ODD", 0x17), exported("IBMKLONE.12", 0xC8)]
+    check(names == ["PRODOS.sys", "NOTES.txt", "IBMKLONE.fon", "SONG.ss", "ODD.dat", "IBMKLONE.12"],
+          "export names use the type's short name, got \(names)")
 }
 
 // MARK: - .img images: raw and DiskCopy 4.2
@@ -1141,6 +1153,90 @@ do {
     }
     check(MODRenderer.parseNinjaTrackerPlus(Data(ntp.prefix(40))) == nil, "a truncated NinjaTracker Plus song is rejected")
 }
+
+// MARK: - Preview pane: MOD texts, resource forks, editing in place
+
+do {
+    // A 4-channel module with one pattern
+    var mod = [UInt8](repeating: 0, count: 1084 + 1024)
+    mod.replaceSubrange(0..<9, with: Array("Old Title".utf8))
+    mod.replaceSubrange(20..<28, with: Array("by Wally".utf8))
+    mod[42] = 0x00; mod[43] = 0x10                                  // sample 1: $10 words
+    mod.replaceSubrange(50..<55, with: Array("greet".utf8))         // sample 2
+    mod.replaceSubrange(80..<83, with: [0x41, 0x00, 0x5A])          // sample 3: "A", then a stray byte
+    mod[950] = 1
+    mod.replaceSubrange(1080..<1084, with: Array("M.K.".utf8))
+    let modData = Data(mod)
+
+    guard var meta = MODMetadata(data: modData) else { check(false, "the module's texts are read"); throw CancellationError() }
+    check(meta.title == "Old Title" && meta.sampleNames[0] == "by Wally" && meta.sampleNames[2] == "A",
+          "title and sample names are read, got \(meta.title) / \(meta.sampleNames.prefix(3))")
+    check(meta.sampleLengths[0] == 32 && meta.channels == 4 && meta.patternCount == 1 && meta.tag == "M.K.",
+          "sample length, channels and patterns are read")
+    check(MODMetadata(data: Data(count: 2000)) == nil, "data without a format tag is not a module")
+
+    meta.title = "A much longer title than fits"
+    meta.sampleNames[1] = "Hello there"
+    let edited = meta.applied(to: modData)!
+    let reread = MODMetadata(data: edited)!
+    check(reread.title == "A much longer title " && reread.sampleNames[1] == "Hello there",
+          "edited texts are written, cut to their width, got \(reread.title)")
+    check(edited.count == modData.count && edited[82] == 0x5A && edited[20..<28] == modData[20..<28],
+          "untouched fields keep their bytes, the size stays the same")
+
+    // Saved in place on a disk, from the pane, keeping the file highlighted
+    let url = newProDOSImage("preview.po", size: "140KB")
+    _ = add(url, "SONG.MOD", modData)
+    _ = add(url, "OTHER", bytes(3000, seed: 6))
+    var errors: [String] = []
+    let pane = makePane(url) { errors.append($0) }
+    pane.toggleSelection(find(pane.catalog, "/SONG.MOD")!)
+    check(pane.previewEntry?.name == "SONG.MOD", "the highlighted file is the one previewed")
+    var saved: Bool?
+    pane.replaceFileData(entry: pane.previewEntry!, data: edited) { saved = $0 }
+    pump { saved != nil }
+    check(saved == true && find(catalog(url), "/SONG.MOD")?.data == edited, "the edited module is saved in place")
+    check(find(catalog(url), "/OTHER")?.data == bytes(3000, seed: 6), "the other file is untouched")
+    check(pane.previewEntry?.name == "SONG.MOD", "the file stays highlighted after the reload")
+
+    saved = nil
+    pane.replaceFileData(entry: pane.previewEntry!, data: Data(count: 10)) { saved = $0 }
+    pump { saved != nil }
+    check(saved == false && errors.count == 1 && find(catalog(url), "/SONG.MOD")?.data == edited,
+          "a different size is refused and nothing changes, got \(errors)")
+    errors = []
+
+    // The type can be changed from the preview; the file stays highlighted
+    pane.changeFileType(entry: pane.previewEntry!, newFileType: 0xD5, newAuxType: 0x0000)
+    pump { pane.previewEntry?.fileType == 0xD5 }
+    check(find(catalog(url), "/SONG.MOD")?.fileType == 0xD5 && pane.previewEntry?.name == "SONG.MOD",
+          "the type change is saved and the file stays highlighted")
+
+    // A resource fork with one rText resource
+    var fork = [UInt8](repeating: 0, count: 145)
+    fork.replaceSubrange(140..<145, with: Array("HELLO".utf8))
+    let mapSize = 0x20 + 40
+    var map = [UInt8](repeating: 0, count: mapSize)
+    map.replaceSubrange(6..<10, with: le32(145))              // mapOffset
+    map.replaceSubrange(10..<14, with: le32(mapSize))         // mapSize
+    map.replaceSubrange(14..<16, with: le16(0x20))            // mapToIndex
+    map.replaceSubrange(20..<24, with: le32(2))               // mapIndexSize
+    map.replaceSubrange(24..<28, with: le32(1))               // mapIndexUsed
+    map.replaceSubrange(0x20..<0x34, with: le16(0x8016) + le32(1) + le32(140) + le16(0) + le32(5) + le32(0))
+    fork += map
+    fork.replaceSubrange(4..<8, with: le32(145))              // rFileToMap
+    fork.replaceSubrange(8..<12, with: le32(mapSize))
+    let resources = ResourceForkParser.parse(Data(fork))
+    check(resources?.count == 1 && resources?[0].typeName == "rText" && resources?[0].resourceID == 1
+          && resources?[0].data == Data("HELLO".utf8), "the resource map is read, got \(String(describing: resources))")
+    check(ResourceForkParser.parse(Data(fork.prefix(150))) == nil, "a truncated fork is rejected")
+
+    // DOS 3.3 disks don't take type or content edits
+    let dosURL = workDir.appendingPathComponent("preview.dsk")
+    try! blankDOS33().write(to: dosURL)
+    let dos = makePane(dosURL) { errors.append($0) }
+    check(dos.fileEditBlockedReason != nil, "editing is refused on DOS 3.3")
+} catch {}
 
 print("\(checkCount - failureCount) of \(checkCount) checks passed")
 exit(failureCount == 0 ? 0 : 1)

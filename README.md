@@ -14,6 +14,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 
 - **Dual-Pane Browser** - Work with two disk images simultaneously
 - **File Inspector** - View file contents with Space, Cmd+I or the context menu; Space again closes it, like Quick Look
+- **Preview Pane** - Turn the other pane into a live preview of the selected file: content, all directory fields, resource forks, editable file and aux type, and editable MOD song and sample texts
 - **Native ProDOS Support** - Read and write ProDOS disk images natively in Swift
 - **DOS 3.3 Support** - Full read and write support for DOS 3.3 disk images
 - **UCSD Pascal Support** - Read UCSD Pascal volumes (read-only)

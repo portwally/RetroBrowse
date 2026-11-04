@@ -21,5 +21,7 @@ swiftc -swift-version 5 -Onone -o "$OUT" \
     ProBrowse/AppleIIgsSoundDecoder.swift \
     ProBrowse/MODRenderer.swift \
     ProBrowse/SoundSmithRenderer.swift \
+    ProBrowse/MODMetadata.swift \
+    ProBrowse/ResourceForkParser.swift \
     Tests/WriterTests/main.swift
 "$OUT" "$@"

@@ -43,7 +43,17 @@ class DiskPaneViewModel: ObservableObject {
     /// Size of the opened file on disk, for the pane header
     @Published private(set) var diskImageFileSize: Int?
     
-    private var lastSelectedEntry: DiskCatalogEntry?
+    /// The row clicked or reached with the arrow keys last
+    @Published private(set) var lastSelectedEntry: DiskCatalogEntry?
+
+    /// This pane shows a preview of the file highlighted in the other pane instead of its disk
+    @Published var isPreviewing = false
+
+    /// The file a preview of this pane shows: the highlighted row, while it is selected
+    var previewEntry: DiskCatalogEntry? {
+        guard let entry = lastSelectedEntry, selectedEntries.contains(entry.id) else { return nil }
+        return entry
+    }
     
     var isAllSelected: Bool {
         guard let catalog = catalog else { return false }
@@ -393,6 +403,12 @@ class DiskPaneViewModel: ObservableObject {
         // A different image starts with every folder closed
         if url != diskImagePath { expandedFolders = [] }
         
+        // A reload after a change keeps the same files selected (entries get new IDs)
+        func path(_ entry: DiskCatalogEntry) -> String { entry.parentPath + entry.name }
+        let isReload = url == diskImagePath
+        let selectedPaths = isReload ? Set(getSelectedEntries().map(path)) : []
+        let highlightedPath = isReload ? lastSelectedEntry.map(path) : nil
+
         didFinishLoading = true
         diskImagePath = url
         catalog = newCatalog
@@ -403,6 +419,12 @@ class DiskPaneViewModel: ObservableObject {
         
         if let openPath = openPath, let directory = directories(alongPath: openPath).last {
             navigateInto(directory)
+        }
+
+        if isReload {
+            let entries = newCatalog.allEntries
+            selectedEntries = Set(entries.filter { selectedPaths.contains(path($0)) }.map { $0.id })
+            lastSelectedEntry = entries.first { path($0) == highlightedPath }
         }
     }
     
@@ -445,8 +467,15 @@ class DiskPaneViewModel: ObservableObject {
     /// Images that only arrived as data and were opened from a temporary copy
     private var temporaryCopies: Set<URL> = []
 
+    /// Why a file's type or contents can't be changed on this disk, or nil if they can
+    var fileEditBlockedReason: String? {
+        if let reason = writeBlockedReason { return reason }
+        if isDOS33 { return "File types and contents can only be changed on ProDOS disks." }
+        return nil
+    }
+
     /// Why this disk cannot be modified, or nil if it can
-    private var writeBlockedReason: String? {
+    var writeBlockedReason: String? {
         if let path = diskImagePath, temporaryCopies.contains(path) {
             return "This disk image was dropped as a copy, so changes could not be saved to the original. Open it with Open Left or Open Right to change it."
         }
@@ -874,16 +903,14 @@ class DiskPaneViewModel: ObservableObject {
         return FileManager.default.fileExists(atPath: result.path) ? result : nil
     }
 
-    /// Name of an exported file: the ProDOS name, with an extension added if it has none
+    /// Name of an exported file: the ProDOS name, with the file type's short name (SYS, FON,
+    /// TXT…) as extension if it has none, or .dat for an unknown type
     static func exportFilename(for entry: DiskCatalogEntry) -> String {
         guard !entry.isDirectory, !entry.name.contains(".") else { return entry.name }
-        switch entry.fileType {
-        // ProDOS file types (DOS 3.3 entries carry them too)
-        case 0x04: return entry.name + ".txt"
-        case 0x06: return entry.name + ".bin"
-        case 0xFA, 0xFC: return entry.name + ".bas"
-        default: return entry.name + ".dat"
-        }
+        // DOS 3.3 entries carry ProDOS file types too
+        let shortName = ProDOSFileTypeInfo.getFileTypeInfo(fileType: entry.fileType, auxType: entry.auxType).shortName
+        let ext = shortName.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        return entry.name + "." + (shortName.hasPrefix("$") || ext.isEmpty ? "dat" : ext)
     }
 
     private static func exportEntry(_ entry: DiskCatalogEntry, to parentFolder: URL, failures: inout [String]) -> Int {
@@ -1448,7 +1475,10 @@ class DiskPaneViewModel: ObservableObject {
             return
         }
 
-        guard canWrite("Change File Type") else { return }
+        if let reason = fileEditBlockedReason {
+            showError("Cannot Change File Type", reason)
+            return
+        }
 
         ProDOSWriter.shared.setFileType(
             diskImagePath: diskImagePath,
@@ -1465,6 +1495,25 @@ class DiskPaneViewModel: ObservableObject {
                 print("Failed to change file type: \(message)")
                 self.showError("Failed to Change File Type", message)
             }
+        }
+    }
+
+    /// Saves new contents for a file of the same size, in place (used for the texts in a MOD file)
+    func replaceFileData(entry: DiskCatalogEntry, data: Data, completion: ((Bool) -> Void)? = nil) {
+        guard let diskImagePath = diskImagePath else { return }
+        if let reason = fileEditBlockedReason {
+            showError("Cannot Save", reason)
+            completion?(false)
+            return
+        }
+        ProDOSWriter.shared.replaceFileData(diskImagePath: diskImagePath, fileName: entry.name,
+                                            parentPath: entry.parentPath, data: data) { success, message in
+            if success {
+                self.loadDiskImage(from: diskImagePath)
+            } else {
+                self.showError("Could Not Save \(entry.name)", message)
+            }
+            completion?(success)
         }
     }
 
