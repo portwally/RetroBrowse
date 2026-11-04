@@ -541,6 +541,53 @@ do {
     disk.pasteClipboard()
     pump { !FocusManager.shared.hasClipboard() }
     check(find(catalog(diskURL), "/DIR/FILE")?.data == content, "a directory copied from an archive lands on the disk")
+
+    // Cutting from a read-only archive is refused rather than failing after the paste
+    select(pane, ["/DIR"])
+    pane.cutSelected()
+    check(!FocusManager.shared.hasClipboard() && errors.count == 1 && errors[0].contains("Cut"),
+          "cut is refused in an archive, got \(errors)")
+    errors = []
+
+    // An archive dropped onto an open disk asks first; each answer does what it says
+    var asked: [(String, Bool)] = []
+    var answer: DiskPaneViewModel.DropAction? = nil
+    disk.chooseDropAction = { name, canUnpack in asked.append((name, canUnpack)); return answer }
+    func dropArchive() {
+        let before = catalog(diskURL)?.allEntries.count
+        disk.dropFiles([url])
+        if answer != nil { pump { catalog(diskURL)?.allEntries.count != before || disk.diskImagePath == url } }
+    }
+
+    answer = nil
+    dropArchive()
+    check(asked.count == 1 && asked[0] == ("files.shk", true), "the user is asked, with Unpack offered, got \(asked)")
+    check(disk.diskImagePath == diskURL && find(catalog(diskURL), "/FILES.SHK") == nil, "Cancel changes nothing")
+
+    answer = .copy
+    dropArchive()
+    let copied = find(catalog(diskURL), "/FILES.SHK")
+    check(copied?.data == archive && copied?.fileType == 0xE0 && copied?.auxType == 0x8002,
+          "Copy as File stores the archive unchanged as a ShrinkIt file")
+
+    _ = wait { ProDOSWriter.shared.createDirectory(diskImagePath: diskURL, directoryName: "UNPACK", parentPath: "/", completion: $0) }
+    disk.loadDiskImage(from: diskURL)
+    disk.navigateInto(find(disk.catalog, "/UNPACK")!)
+    answer = .unpack
+    dropArchive()
+    check(find(catalog(diskURL), "/UNPACK/DIR/FILE")?.data == content, "Unpack Files copies the archive's files into the folder shown")
+    check(disk.diskImagePath == diskURL && errors.isEmpty, "unpacking keeps the disk open, errors \(errors)")
+
+    answer = .open
+    dropArchive()
+    check(disk.diskImagePath == url && disk.isArchiveBacked, "Open in Pane opens the archive")
+
+    // With no writable disk open, the archive just opens, without asking
+    asked = []
+    let empty = DiskPaneViewModel()
+    empty.chooseDropAction = { name, canUnpack in asked.append((name, canUnpack)); return .copy }
+    empty.dropFiles([url])
+    check(asked.isEmpty && empty.diskImagePath == url, "an empty pane opens a dropped archive directly")
 }
 
 // MARK: - Archives: checksums, squeeze, LZW and dates

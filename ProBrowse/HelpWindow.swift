@@ -176,6 +176,7 @@ struct FileOperationsHelpView: View {
             HelpSection("Copying Files") {
                 HelpBullet("**Drag & Drop** - Drag files from one pane to another")
                 HelpBullet("**Import from Finder** - Drag files from Finder into a pane")
+                HelpBullet("**Archives and images from Finder** - Dropped onto an open disk, RetroBrowse asks whether to copy it as a file, unpack the archive's files, or open it in the pane")
                 HelpBullet("**Copy/Paste** - Use Cmd+C and Cmd+V")
                 HelpBullet("**Cut/Paste** - Use Cmd+X and Cmd+V (moves files)")
             }

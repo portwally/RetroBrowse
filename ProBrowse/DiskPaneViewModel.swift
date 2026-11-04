@@ -184,7 +184,7 @@ class DiskPaneViewModel: ObservableObject {
                             ArchiveFile(path: entry.filename, separator: "/", fileType: entry.fileType, auxType: entry.auxType,
                                         data: archive.extractData(for: entry) ?? Data(), resourceFork: nil)
                         }
-                        finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: "Binary II Archive", files: files),
+                        finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: DiskCatalog.binaryIIArchiveFormat, files: files),
                                       from: url, isArchiveBacked: true)
                         return
                     }
@@ -256,7 +256,7 @@ class DiskPaneViewModel: ObservableObject {
                         showError("Could Not Open Archive", "Nothing in \(url.lastPathComponent) could be extracted. The archive may be damaged.")
                         return
                     }
-                    finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: "ShrinkIt Archive", files: files),
+                    finishLoading(DiskCatalog.fromArchive(name: url.lastPathComponent, format: DiskCatalog.shrinkItArchiveFormat, files: files),
                                   from: url, isArchiveBacked: true)
                     reportFailures("Some Files Could Not Be Extracted", unreadable)
                     return
@@ -904,13 +904,105 @@ class DiskPaneViewModel: ObservableObject {
     
     // MARK: - Import Files
     
-    /// ProDOS file type for a file imported from the Mac, judged by its extension
-    static func importFileType(forExtension ext: String) -> UInt8 {
+    /// ProDOS file and aux type for a file imported from the Mac, judged by its extension
+    static func importFileType(forExtension ext: String) -> (fileType: UInt8, auxType: UInt16) {
         switch ext.lowercased() {
         case "txt", "text", "s", "asm", "src", "bas":
-            return 0x04  // TXT (BASIC arrives as source text, not tokenized)
+            return (0x04, 0x0000)  // TXT (BASIC arrives as source text, not tokenized)
+        case "shk", "sdk", "bxy":
+            return (0xE0, 0x8002)  // ShrinkIt (NuFX) archive, so ShrinkIt on the Apple II can open it
+        case "bny", "bqy", "bii":
+            return (0xE0, 0x8000)  // Binary II
         default:
-            return 0x06  // BIN
+            return (0x06, 0x0000)  // BIN
+        }
+    }
+
+    // MARK: - Dropped Files
+
+    enum DropAction {
+        /// Import the image or archive as one file
+        case copy
+        /// Copy the files inside the archive onto the disk
+        case unpack
+        /// Open the image or archive in this pane instead of the disk
+        case open
+    }
+
+    /// Asks what to do with a disk image or archive dropped onto an open disk; nil cancels.
+    /// `canUnpack` is true for an archive of files. Replaceable so it can be tested without a window.
+    var chooseDropAction: (_ filename: String, _ canUnpack: Bool) -> DropAction? = { filename, canUnpack in
+        let alert = NSAlert()
+        alert.messageText = "Copy “\(filename)” onto this disk?"
+        alert.informativeText = canUnpack
+            ? "Copy the archive as one file, unpack the files inside it onto this disk, or open the archive in this pane instead."
+            : "Copy it as one file, or open it in this pane instead."
+        let choices: [DropAction] = canUnpack ? [.copy, .unpack, .open] : [.copy, .open]
+        for choice in choices {
+            switch choice {
+            case .copy: alert.addButton(withTitle: "Copy as File")
+            case .unpack: alert.addButton(withTitle: "Unpack Files")
+            case .open: alert.addButton(withTitle: "Open in Pane")
+            }
+        }
+        alert.addButton(withTitle: "Cancel")
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return choices.indices.contains(index) ? choices[index] : nil
+    }
+
+    /// Handles files dropped from the Mac. A disk image or archive opens in this pane, unless
+    /// a disk that can be changed is open: then the user picks between copying it as a file,
+    /// unpacking an archive's files onto the disk, or opening it. Anything else is imported.
+    func dropFiles(_ urls: [URL], and files: [ImportedFile] = []) {
+        func isOpenable(_ filename: String) -> Bool {
+            return Self.openableExtensions.contains((filename as NSString).pathExtension.lowercased())
+        }
+
+        // The first image or archive; one that only arrived as data is opened from a temporary copy
+        var openable = urls.first { isOpenable($0.lastPathComponent) }
+        var otherFiles = files
+        if openable == nil, let index = files.firstIndex(where: { isOpenable($0.filename) }) {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(files[index].filename)
+            if (try? files[index].data.write(to: tempURL)) != nil {
+                openable = tempURL
+                otherFiles.remove(at: index)
+            }
+        }
+        guard let image = openable else {
+            importFiles(from: urls, and: files)
+            return
+        }
+        guard catalog != nil, writeBlockedReason == nil else {
+            loadDiskImage(from: image)
+            return
+        }
+
+        // Read the image or archive on its own, without touching this pane
+        let probe = DiskPaneViewModel()
+        probe.presentError = { _, _ in }
+        probe.loadDiskImage(from: image)
+        let archive = (probe.catalog?.isFileArchive == true) ? probe.catalog : nil
+
+        switch chooseDropAction(image.lastPathComponent, archive != nil) {
+        case .copy:
+            importFiles(from: urls.contains(image) ? urls : urls + [image], and: otherFiles)
+        case .unpack:
+            guard let archive = archive, let imagePath = diskImagePath else { return }
+            copyEntries(archive.rootEntries, to: imagePath, parentPath: currentDirectoryPath) { _, failures in
+                // Other files dropped together with the archive are imported as usual
+                let others = urls.filter { $0 != image }
+                if others.isEmpty && otherFiles.isEmpty {
+                    self.loadDiskImage(from: imagePath)
+                    self.reportFailures("Some Files Could Not Be Unpacked", failures)
+                } else {
+                    self.reportFailures("Some Files Could Not Be Unpacked", failures)
+                    self.importFiles(from: others, and: otherFiles)
+                }
+            }
+        case .open:
+            loadDiskImage(from: image)
+        case nil:
+            break
         }
     }
     
@@ -951,10 +1043,9 @@ class DiskPaneViewModel: ObservableObject {
         }
         
         let file = files[index]
-        let fileExtension = (file.filename as NSString).pathExtension
+        let type = Self.importFileType(forExtension: (file.filename as NSString).pathExtension)
         
-        addImportedFile(file.data, filename: file.filename,
-                        fileType: Self.importFileType(forExtension: fileExtension), auxType: 0x0000) { failure in
+        addImportedFile(file.data, filename: file.filename, fileType: type.fileType, auxType: type.auxType) { failure in
             self.importNextFile(files, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
         }
     }
@@ -1382,6 +1473,9 @@ class DiskPaneViewModel: ObservableObject {
             print("❌ No disk loaded")
             return
         }
+        
+        // Moving files out needs them deleted here afterwards
+        guard canWrite("Cut") else { return }
         
         FocusManager.shared.copyToClipboard(entries: entries, operation: .cut, sourcePath: sourcePath, source: self)
     }

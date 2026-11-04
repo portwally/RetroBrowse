@@ -143,6 +143,14 @@ struct DiskCatalog: Codable {
         return entries
     }
     
+    /// Files from a ShrinkIt or Binary II archive, as opposed to a disk
+    var isFileArchive: Bool {
+        return diskFormat == Self.shrinkItArchiveFormat || diskFormat == Self.binaryIIArchiveFormat
+    }
+    
+    static let shrinkItArchiveFormat = "ShrinkIt Archive"
+    static let binaryIIArchiveFormat = "Binary II Archive"
+    
     var totalFiles: Int {
         countFiles(in: entries)
     }

@@ -428,22 +428,7 @@ struct DiskBrowserPane: View {
                 return
             }
 
-            // A disk image or archive is opened; anything else is imported into the open disk
-            func isOpenable(_ filename: String) -> Bool {
-                return DiskPaneViewModel.openableExtensions.contains((filename as NSString).pathExtension.lowercased())
-            }
-
-            if let image = droppedURLs.first(where: { isOpenable($0.lastPathComponent) }) {
-                self.viewModel.loadDiskImage(from: image)
-            } else if let image = droppedFiles.first(where: { isOpenable($0.filename) }) {
-                // Only the data arrived, so the image is opened from a temporary copy
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(image.filename)
-                if (try? image.data.write(to: tempURL)) != nil {
-                    self.viewModel.loadDiskImage(from: tempURL)
-                }
-            } else {
-                self.viewModel.importFiles(from: droppedURLs, and: droppedFiles)
-            }
+            self.viewModel.dropFiles(droppedURLs, and: droppedFiles)
         }
 
         return true
