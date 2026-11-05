@@ -2,7 +2,36 @@
 
 All notable changes to RetroBrowse will be documented in this file.
 
-## [2.6] - Unreleased
+## [1.8] - 2026-11-05
+
+Version numbers now follow the app and the GitHub releases (1.6, then 1.8); the 2.x
+numbers below were used by this file only.
+
+### Added
+- **Preview pane** - The Preview button turns a pane into a live preview of the file selected in the other pane: content, every directory field, IIgs resource forks and hex
+- **Edit in the preview** - Change file type and aux type; edit and save a MOD file's song title and sample names
+- **WOZ disk images** - Read-only; 5.25" (16 and 13 sector) and 3.5" bit images decoded natively; copy-protected disks open as far as they can be read; title, publisher and other details in Disk Image Info
+- **.img disk images** - Raw images read and write; DiskCopy 4.2 read-only
+- **Sound and music** - IIgs sampled sounds, rSound resources, HyperStudio, ASIF, AIFF, SoundSmith, NinjaTracker Plus, MOD and MIDI play when opened
+- **Skins** - System, Light, Dark, Norton Commander and Apple IIGS 640 (RetroBrowse > Settings)
+- **Welcome** on first launch, with the backup warning; again from Help
+- **Archives dropped on an open disk** - Choose to copy as a file, unpack the files, or open it
+- **Arrow keys** move through a pane, and the inspector follows; Space opens and closes the inspector
+- **Expand / Collapse All** buttons
+- **Help** - File Types table of every file and aux type with what can be read; Sound & Music topic
+- **Pictures fit** the inspector and preview by default (Fit, 1x, 2x, 3x)
+
+### Changed
+- Files exported or dragged to the Finder take their file type's short name as extension (PRODOS.sys, FONT.fon)
+- A disk changed from the preview or by a copy keeps the same files selected after it reloads
+- Cut is refused in read-only panes
+
+### Fixed
+- **Disk images dropped from the Finder** are opened in place even when another app (Virtual II) claims their type; before, changes went to a temporary copy and were lost
+- **Rows dragged to the Finder** arrive as files instead of a text clipping
+- **Changing the file type on DOS 3.3 disks** is refused instead of going through the ProDOS writer
+
+## [2.6] - 2026-11-05 (included in 1.8)
 
 ### Fixed
 - **DOS 3.3 writing** - The free-sector map was read with its bytes swapped, so adding a file could overwrite existing data

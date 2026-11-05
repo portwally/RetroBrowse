@@ -1,6 +1,6 @@
 # RetroBrowse
 
-This is an early version under active development. It may contain bugs that could corrupt your disk images. **Always backup your disk images before using RetroBrowse!**
+**Always back up your disk images before using RetroBrowse!**
 
 ---
 
@@ -18,6 +18,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 - **Native ProDOS Support** - Read and write ProDOS disk images natively in Swift
 - **DOS 3.3 Support** - Full read and write support for DOS 3.3 disk images
 - **UCSD Pascal Support** - Read UCSD Pascal volumes (read-only)
+- **WOZ Disk Images** - Read Applesauce .woz bit images (read-only), with their title and publisher
 - **ShrinkIt Archives** - Browse and extract NuFX archives (.shk, .sdk, .bxy)
 - **Binary II Archives** - Browse and extract Binary II archives (.bny, .bqy)
 - **Drag & Drop** - Copy files between disk images or import from Finder
