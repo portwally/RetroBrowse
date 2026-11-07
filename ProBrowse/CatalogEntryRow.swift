@@ -26,13 +26,15 @@ struct CatalogEntryRow: View {
     /// Open/closed state of folders, kept by the pane's view model
     let isExpanded: (DiskCatalogEntry) -> Bool
     let setExpanded: (DiskCatalogEntry, Bool) -> Void
+    /// Puts a folder's contents in the order the pane is sorted in
+    let sortEntries: ([DiskCatalogEntry]) -> [DiskCatalogEntry]
     @ObservedObject var columnWidths: ColumnWidths
     
     private var expandedBinding: Binding<Bool> {
         Binding(get: { isExpanded(entry) }, set: { setExpanded(entry, $0) })
     }
 
-    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, isExpanded: @escaping (DiskCatalogEntry) -> Bool, setExpanded: @escaping (DiskCatalogEntry, Bool) -> Void, columnWidths: ColumnWidths) {
+    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, isExpanded: @escaping (DiskCatalogEntry) -> Bool, setExpanded: @escaping (DiskCatalogEntry, Bool) -> Void, sortEntries: @escaping ([DiskCatalogEntry]) -> [DiskCatalogEntry] = { $0 }, columnWidths: ColumnWidths) {
         self.entry = entry
         self.isSelected = isSelected
         self.onToggle = onToggle
@@ -50,6 +52,7 @@ struct CatalogEntryRow: View {
         self.level = level
         self.isExpanded = isExpanded
         self.setExpanded = setExpanded
+        self.sortEntries = sortEntries
         self.columnWidths = columnWidths
     }
     
@@ -82,7 +85,7 @@ struct CatalogEntryRow: View {
             
             // Children (if expanded)
             if isExpanded(entry), let children = entry.children, !children.isEmpty {
-                ForEach(children) { child in
+                ForEach(sortEntries(children)) { child in
                     CatalogEntryRow(
                         entry: child,
                         isSelected: isSelected,
@@ -101,6 +104,7 @@ struct CatalogEntryRow: View {
                         level: level + 1,
                         isExpanded: isExpanded,
                         setExpanded: setExpanded,
+                        sortEntries: sortEntries,
                         columnWidths: columnWidths
                     )
                 }

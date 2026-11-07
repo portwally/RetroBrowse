@@ -279,3 +279,20 @@ extension DiskCatalog {
         return entries
     }
 }
+
+// MARK: - Dates
+
+extension DiskCatalogEntry {
+    /// How dates are shown, in the Mac's own format; also used to read them back for sorting
+    static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    /// The modification date as a date, for sorting; nil when the entry has none
+    var modificationDateValue: Date? {
+        modificationDate.flatMap { Self.dateFormatter.date(from: $0) }
+    }
+}

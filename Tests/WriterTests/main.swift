@@ -574,7 +574,9 @@ do {
     disk.loadDiskImage(from: diskURL)
     disk.navigateInto(find(disk.catalog, "/UNPACK")!)
     answer = .unpack
-    dropArchive()
+    // Unpacking writes the folder first and its file after, so wait for the file
+    disk.dropFiles([url])
+    pump { find(catalog(diskURL), "/UNPACK/DIR/FILE") != nil }
     check(find(catalog(diskURL), "/UNPACK/DIR/FILE")?.data == content, "Unpack Files copies the archive's files into the folder shown")
     check(disk.diskImagePath == diskURL && errors.isEmpty, "unpacking keeps the disk open, errors \(errors)")
 
@@ -1585,6 +1587,57 @@ do {
     let p35 = makePane(url35) { errors.append($0) }
     check(find(p35.catalog, "/BIG")?.data == big && find(p35.catalog, "/HELLO") != nil && errors.isEmpty && p35.writeBlockedReason != nil,
           "a 3.5\" WOZ disk opens read-only, errors: \(errors)")
+}
+
+// MARK: - Sorting the file list
+
+do {
+    let url = newProDOSImage("sort.po", size: "140KB")
+    _ = wait { ProDOSWriter.shared.createDirectory(diskImagePath: url, directoryName: "GAMES", parentPath: "/", completion: $0) }
+    _ = add(url, "ZEBRA", bytes(100, seed: 1), type: 0x04)
+    _ = add(url, "APPLE", bytes(3000, seed: 2), type: 0xFF)
+    _ = add(url, "file10", bytes(700, seed: 3))
+    _ = add(url, "file9", bytes(700, seed: 4))
+    _ = add(url, "INNER2", bytes(10, seed: 5), parent: "/GAMES/")
+    _ = add(url, "INNER1", bytes(20, seed: 6), parent: "/GAMES/")
+    let pane = makePane(url) { _ in }
+    func names() -> [String] { pane.visibleEntries.map { $0.name } }
+    let diskOrder = names()
+
+    pane.sort(by: .name)
+    check(names() == ["APPLE", "FILE9", "FILE10", "GAMES", "ZEBRA"], "sorted by name, numbers in numeric order, got \(names())")
+    pane.sort(by: .name)
+    check(names() == ["ZEBRA", "GAMES", "FILE10", "FILE9", "APPLE"], "a second click reverses, got \(names())")
+    pane.sort(by: .name)
+    check(names() == diskOrder && pane.sortColumn == nil, "a third click goes back to the order on the disk")
+
+    pane.sort(by: .size)
+    check(names().first == "ZEBRA" && names().last == "APPLE"
+          && names().firstIndex(of: "FILE9")! < names().firstIndex(of: "FILE10")!,
+          "sorted by size, equal sizes by name, got \(names())")
+    pane.sort(by: .type)
+    let types = pane.visibleEntries.map { $0.fileTypeString }
+    check(types == types.sorted { $0.localizedStandardCompare($1) == .orderedAscending }, "sorted by type, got \(types)")
+
+    // Open folders are sorted too, and the arrow keys follow the order on screen
+    pane.sort(by: .name)
+    pane.setExpanded(find(pane.catalog, "/GAMES")!, true)
+    check(names() == ["APPLE", "FILE9", "FILE10", "GAMES", "INNER1", "INNER2", "ZEBRA"], "an open folder's contents are sorted, got \(names())")
+    pane.selectedEntries = []
+    pane.moveSelection(by: 1)
+    pane.moveSelection(by: 1)
+    check(pane.getSelectedEntries().map { $0.name } == ["FILE9"], "the arrow keys move in the sorted order")
+
+    // Dates sort as dates, not as text
+    let early = DiskCatalogEntry.dateFormatter.string(from: Date(timeIntervalSince1970: 86400 * 400))
+    let late = DiskCatalogEntry.dateFormatter.string(from: Date(timeIntervalSince1970: 86400 * 20000))
+    func dated(_ name: String, _ date: String?) -> DiskCatalogEntry {
+        DiskCatalogEntry(name: name, fileType: 6, fileTypeString: "BIN", size: 1, blocks: 1, loadAddress: nil, length: 1,
+                         data: Data(), isImage: false, isDirectory: false, children: nil, modificationDate: date)
+    }
+    pane.sort(by: .modified)
+    let byDate = pane.sorted([dated("LATE", late), dated("NONE", nil), dated("EARLY", early)]).map { $0.name }
+    check(byDate == ["NONE", "EARLY", "LATE"], "sorted by modification date, got \(byDate)")
 }
 
 print("\(checkCount - failureCount) of \(checkCount) checks passed")

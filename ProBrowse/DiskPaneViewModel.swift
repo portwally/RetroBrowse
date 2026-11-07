@@ -52,6 +52,57 @@ class DiskPaneViewModel: ObservableObject {
     /// The row clicked or reached with the arrow keys last
     @Published private(set) var lastSelectedEntry: DiskCatalogEntry?
 
+    /// Columns the file list can be sorted by
+    enum SortColumn: String {
+        case name, type, size, modified
+    }
+
+    /// The column the list is sorted by, or nil for the order on the disk
+    @Published private(set) var sortColumn: SortColumn?
+    @Published private(set) var sortAscending = true
+
+    /// A click on a column header: sort by it, then reverse, then back to the order on the disk
+    func sort(by column: SortColumn) {
+        if sortColumn != column {
+            sortColumn = column
+            sortAscending = true
+        } else if sortAscending {
+            sortAscending = false
+        } else {
+            sortColumn = nil
+            sortAscending = true
+        }
+    }
+
+    /// Entries of one folder in the order the list shows them. Ties are broken by name.
+    func sorted(_ entries: [DiskCatalogEntry]) -> [DiskCatalogEntry] {
+        guard let column = sortColumn else { return entries }
+        // Dates are kept as text; read each one once rather than at every comparison
+        var dates: [UUID: Date] = [:]
+        if column == .modified {
+            for entry in entries { dates[entry.id] = entry.modificationDateValue ?? .distantPast }
+        }
+        func byName(_ a: DiskCatalogEntry, _ b: DiskCatalogEntry) -> Bool {
+            a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+        func inOrder(_ a: DiskCatalogEntry, _ b: DiskCatalogEntry) -> Bool {
+            switch column {
+            case .name:
+                return byName(a, b)
+            case .type:
+                let order = a.fileTypeString.localizedStandardCompare(b.fileTypeString)
+                return order == .orderedSame ? byName(a, b) : order == .orderedAscending
+            case .size:
+                return a.size == b.size ? byName(a, b) : a.size < b.size
+            case .modified:
+                // Entries without a date come first, as the oldest
+                let da = dates[a.id] ?? .distantPast, db = dates[b.id] ?? .distantPast
+                return da == db ? byName(a, b) : da < db
+            }
+        }
+        return entries.sorted { sortAscending ? inOrder($0, $1) : inOrder($1, $0) }
+    }
+
     /// This pane shows a preview of the file highlighted in the other pane instead of its disk
     @Published var isPreviewing = false
 
@@ -727,7 +778,8 @@ class DiskPaneViewModel: ObservableObject {
             selectedEntries.insert(entry.id)
             return
         }
-        let allEntries = flattenEntries(catalog.entries).filter { $0.parentPath == entry.parentPath }
+        // In the order shown on screen
+        let allEntries = sorted(flattenEntries(catalog.entries).filter { $0.parentPath == entry.parentPath })
         
         guard let startIndex = allEntries.firstIndex(where: { $0.id == lastSelected.id }),
               let endIndex = allEntries.firstIndex(where: { $0.id == entry.id }) else {
@@ -803,10 +855,10 @@ class DiskPaneViewModel: ObservableObject {
         func add(_ entries: [DiskCatalogEntry]) {
             for entry in entries {
                 rows.append(entry)
-                if isExpanded(entry), let children = entry.children { add(children) }
+                if isExpanded(entry), let children = entry.children { add(sorted(children)) }
             }
         }
-        add(currentDirectory?.children ?? catalog?.rootEntries ?? [])
+        add(sorted(currentDirectory?.children ?? catalog?.rootEntries ?? []))
         return rows
     }
 

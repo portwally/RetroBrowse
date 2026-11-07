@@ -95,12 +95,7 @@ class DiskImageParser {
             return nil
         }
         
-        // Format using system locale
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        
-        return formatter.string(from: date)
+        return DiskCatalogEntry.dateFormatter.string(from: date)
     }
     
     // MARK: - DOS 3.3 Date/Time Parsing (not supported by DOS 3.3)

@@ -188,7 +188,7 @@ struct DiskBrowserPane: View {
     private func browserContentView(catalog: DiskCatalog) -> some View {
         VStack(spacing: 0) {
             // Column Headers
-            ColumnHeadersView(columnWidths: columnWidths)
+            ColumnHeadersView(columnWidths: columnWidths, viewModel: viewModel)
             
             Divider()
                 .overlay(skin.lines)
@@ -229,7 +229,7 @@ struct DiskBrowserPane: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(entriesToShow) { entry in
+                    ForEach(viewModel.sorted(entriesToShow)) { entry in
                         catalogEntryRowWithDrag(entry: entry)
                     }
                 }
@@ -309,6 +309,7 @@ struct DiskBrowserPane: View {
             level: 0,
             isExpanded: { viewModel.isExpanded($0) },
             setExpanded: { viewModel.setExpanded($0, $1) },
+            sortEntries: { viewModel.sorted($0) },
             columnWidths: columnWidths
         )
     }
@@ -457,8 +458,16 @@ struct DragPayload: Codable {
 
 struct ColumnHeadersView: View {
     @ObservedObject var columnWidths: ColumnWidths
+    @ObservedObject var viewModel: DiskPaneViewModel
     @Environment(\.skin) private var skin
     
+    /// A header that sorts by its column; it is told its state, so it redraws when that changes
+    private func sortableHeader(_ title: String, width: Binding<Double>, column: DiskPaneViewModel.SortColumn) -> ColumnHeader {
+        ColumnHeader(title: title, width: width,
+                     sortedAscending: viewModel.sortColumn == column ? viewModel.sortAscending : nil,
+                     onSort: { viewModel.sort(by: column) })
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
@@ -467,13 +476,13 @@ struct ColumnHeadersView: View {
                 
                 HStack(spacing: 0) {
                     // Name Column
-                    ColumnHeader(title: "Name", width: $columnWidths.nameWidth)
+                    sortableHeader("Name", width: $columnWidths.nameWidth, column: .name)
                     
                     // Divider resizes NAME column (to the left)
                     ColumnDivider(leftWidth: $columnWidths.nameWidth, minLeftWidth: 100, maxLeftWidth: 400)
                     
                     // Type Column
-                    ColumnHeader(title: "Type", width: $columnWidths.typeWidth)
+                    sortableHeader("Type", width: $columnWidths.typeWidth, column: .type)
                     
                     // Divider resizes TYPE column (to the left)
                     ColumnDivider(leftWidth: $columnWidths.typeWidth, minLeftWidth: 40, maxLeftWidth: 150)
@@ -485,13 +494,13 @@ struct ColumnHeadersView: View {
                     ColumnDivider(leftWidth: $columnWidths.auxWidth, minLeftWidth: 60, maxLeftWidth: 150)
                     
                     // Size Column
-                    ColumnHeader(title: "Size", width: $columnWidths.sizeWidth)
+                    sortableHeader("Size", width: $columnWidths.sizeWidth, column: .size)
                     
                     // Divider resizes SIZE column (to the left)
                     ColumnDivider(leftWidth: $columnWidths.sizeWidth, minLeftWidth: 80, maxLeftWidth: 200)
                     
                     // Modified Column
-                    ColumnHeader(title: "Modified", width: $columnWidths.modifiedWidth)
+                    sortableHeader("Modified", width: $columnWidths.modifiedWidth, column: .modified)
                     
                     // Divider resizes MODIFIED column (to the left)
                     ColumnDivider(leftWidth: $columnWidths.modifiedWidth, minLeftWidth: 100, maxLeftWidth: 200)
@@ -517,17 +526,29 @@ struct ColumnHeadersView: View {
 struct ColumnHeader: View {
     let title: String
     @Binding var width: Double
+    /// True or false when the list is sorted by this column (ascending or not), nil otherwise
+    var sortedAscending: Bool? = nil
+    /// Sorts by this column; nil for a header that doesn't sort
+    var onSort: (() -> Void)? = nil
     @Environment(\.skin) private var skin
-    
+
     var body: some View {
-        HStack(spacing: 0) {
-            Spacer().frame(width: 8)
+        HStack(spacing: 4) {
+            Spacer().frame(width: 4)
             Text(title)
                 .font(skin.font(11, weight: .semibold))
                 .foregroundColor(skin.columnHeaderText)
+            if let ascending = sortedAscending {
+                Image(systemName: ascending ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(skin.columnHeaderText)
+            }
             Spacer(minLength: 0)
         }
         .frame(width: width, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { onSort?() }
+        .help(onSort == nil ? "" : "Sort by \(title.lowercased()); click again to reverse, a third time for the order on the disk")
     }
 }
 
