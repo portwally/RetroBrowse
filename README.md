@@ -34,6 +34,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 - **Teach Viewer** - Apple IIgs Teach documents with fonts, styles, and colors
 - **Sound & Music Player** - SoundSmith, NinjaTracker Plus, ProTracker MOD, rSound, HyperStudio, ASIF, AIFF and MIDI play as soon as they are opened
 - **Expand / Collapse All** - Open or close every folder in a pane at once
+- **Sortable Columns** - Click Name, Type, Size or Modified to sort; click again to reverse, a third time for the order on the disk
 - **Skins** - System, Light, Dark, Norton Commander or Apple IIGS 640 (RetroBrowse > Settings)
 - **Date/Time Support** - Displays creation and modification dates from ProDOS
 - **Modern UI** - Clean SwiftUI interface with resizable columns
