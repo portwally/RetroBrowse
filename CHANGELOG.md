@@ -2,6 +2,11 @@
 
 All notable changes to RetroBrowse will be documented in this file.
 
+## [1.9] - 2026-11-07
+
+### Added
+- **Sortable columns** - Click Name, Type, Size or Modified to sort the file list; click again to reverse, a third time for the order on the disk. Open folders, the arrow keys and Shift-click follow the order shown; dates sort as dates
+
 ## [1.8] - 2026-11-05
 
 Version numbers now follow the app and the GitHub releases (1.6, then 1.8); the 2.x
