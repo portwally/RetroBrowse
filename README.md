@@ -21,7 +21,8 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 - **WOZ Disk Images** - Read Applesauce .woz bit images (read-only), with their title and publisher
 - **ShrinkIt Archives** - Browse and extract NuFX archives (.shk, .sdk, .bxy)
 - **Binary II Archives** - Browse and extract Binary II archives (.bny, .bqy)
-- **Drag & Drop** - Copy files between disk images or import from Finder
+- **Drag & Drop** - Copy files between disk images or import from Finder; drop on a folder to copy straight into it
+- **Open Recent** - File > Open Recent reopens the last ten pairs of disks, each in its own pane
 - **Change File Type** - Right-click to modify file type and aux type
 - **Complete File Type Database** - Recognizes 200+ ProDOS file types with proper names
 - **Graphics Preview** - View Apple II graphics (HGR, DHGR, SHR, APF) directly
@@ -33,7 +34,7 @@ RetroBrowse is a modern macOS dual-pane file manager for Apple II disk images, b
 - **AppleWorks Viewer** - Classic and GS word processor, database, and spreadsheet
 - **Teach Viewer** - Apple IIgs Teach documents with fonts, styles, and colors
 - **Sound & Music Player** - SoundSmith, NinjaTracker Plus, ProTracker MOD, rSound, HyperStudio, ASIF, AIFF and MIDI play as soon as they are opened
-- **Expand / Collapse All** - Open or close every folder in a pane at once
+- **Expand / Collapse All** - Open or close every folder in a pane at once; Return (or the right and left arrows) opens and closes the highlighted folder
 - **Quick Look in the Finder** - Press Space on a disk image or archive in the Finder to see its volume and every file; disk images get floppy, 3.5" and hard disk icons labelled with the volume name
 - **Sortable Columns** - Click Name, Type, Size or Modified to sort; click again to reverse, a third time for the order on the disk
 - **Skins** - System, Light, Dark, Norton Commander or Apple IIGS 640 (RetroBrowse > Settings)
