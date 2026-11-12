@@ -24,5 +24,6 @@ swiftc -swift-version 5 -Onone -o "$OUT" \
     ProBrowse/MODMetadata.swift \
     ProBrowse/ResourceForkParser.swift \
     ProBrowse/WOZImage.swift \
+    ProBrowse/DiskImageLoader.swift \
     Tests/WriterTests/main.swift
 "$OUT" "$@"
