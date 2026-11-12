@@ -19,6 +19,8 @@ struct DiskBrowserPane: View {
     var hideHeader: Bool = false
     
     @State private var isTargeted = false
+    /// The folder a drag is over, e.g. "/GAMES/"; highlighted, and where the drop goes
+    @State private var dropFolder: String?
     @StateObject private var focusManager = FocusManager.shared
     @Environment(\.skin) private var skin
     
@@ -204,7 +206,8 @@ struct DiskBrowserPane: View {
         )
         .overlay(
             Group {
-                if isTargeted {
+                // A drop on empty space, or on a file in the folder shown, goes to that folder
+                if isTargeted || (dropFolder != nil && dropFolder == viewModel.currentDirectoryPath) {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.blue, lineWidth: 2)
                         .padding(4)
@@ -306,6 +309,13 @@ struct DiskBrowserPane: View {
                 viewModel.deleteSelected()
             },
             dragProvider: { createDragProvider(for: $0) },
+            rowDrop: RowDrop(
+                types: Self.droppableTypes,
+                highlightedFolder: dropFolder,
+                enter: { dropFolder = $0 },
+                exit: { if dropFolder == $0 { dropFolder = nil } },
+                perform: { handleDrop(providers: $0, into: $1) }
+            ),
             level: 0,
             isExpanded: { viewModel.isExpanded($0) },
             setExpanded: { viewModel.setExpanded($0, $1) },
@@ -368,7 +378,8 @@ struct DiskBrowserPane: View {
     /// entries dragged from a pane must be named or they arrive as exported files.
     private static let droppableTypes: [UTType] = [DragPayload.type, .fileURL, .plainText, .item, .data]
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+    /// `folder` is the directory dropped on, nil for the one shown in the pane
+    private func handleDrop(providers: [NSItemProvider], into folder: String? = nil) -> Bool {
         print("📥 DROP: Received \(providers.count) providers")
         for (i, provider) in providers.enumerated() {
             print("   Provider \(i): \(provider.registeredTypeIdentifiers)")
@@ -381,7 +392,7 @@ struct DiskBrowserPane: View {
                     guard let payload = data.flatMap({ try? JSONDecoder().decode(DragPayload.self, from: $0) }) else { return }
                     // Dropping entries back onto the image they came from would only duplicate them
                     guard payload.sourceImagePath != self.viewModel.diskImagePath?.path else { return }
-                    self.viewModel.importEntries(payload.entries, from: self.targetViewModel)
+                    self.viewModel.importEntries(payload.entries, from: self.targetViewModel, into: folder)
                 }
             }
             return true
@@ -435,7 +446,7 @@ struct DiskBrowserPane: View {
         }
 
         group.notify(queue: .main) {
-            self.viewModel.dropFiles(droppedURLs, and: droppedFiles)
+            self.viewModel.dropFiles(droppedURLs, and: droppedFiles, into: folder)
         }
 
         return true

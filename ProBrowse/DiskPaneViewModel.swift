@@ -835,7 +835,8 @@ class DiskPaneViewModel: ObservableObject {
     /// Handles files dropped from the Mac. A disk image or archive opens in this pane, unless
     /// a disk that can be changed is open: then the user picks between copying it as a file,
     /// unpacking an archive's files onto the disk, or opening it. Anything else is imported.
-    func dropFiles(_ urls: [URL], and files: [ImportedFile] = []) {
+    /// `folder` is the directory dropped on, e.g. "/GAMES/"; nil for the one shown in the pane.
+    func dropFiles(_ urls: [URL], and files: [ImportedFile] = [], into folder: String? = nil) {
         func isOpenable(_ filename: String) -> Bool {
             return Self.openableExtensions.contains((filename as NSString).pathExtension.lowercased())
         }
@@ -852,7 +853,7 @@ class DiskPaneViewModel: ObservableObject {
             }
         }
         guard let image = openable else {
-            importFiles(from: urls, and: files)
+            importFiles(from: urls, and: files, into: folder)
             return
         }
         guard catalog != nil, writeBlockedReason == nil else {
@@ -868,10 +869,10 @@ class DiskPaneViewModel: ObservableObject {
 
         switch chooseDropAction(image.lastPathComponent, archive != nil) {
         case .copy:
-            importFiles(from: urls.contains(image) ? urls : urls + [image], and: otherFiles)
+            importFiles(from: urls.contains(image) ? urls : urls + [image], and: otherFiles, into: folder)
         case .unpack:
             guard let archive = archive, let imagePath = diskImagePath else { return }
-            copyEntries(archive.rootEntries, to: imagePath, parentPath: currentDirectoryPath) { _, failures in
+            copyEntries(archive.rootEntries, to: imagePath, parentPath: folder ?? currentDirectoryPath) { _, failures in
                 // Other files dropped together with the archive are imported as usual
                 let others = urls.filter { $0 != image }
                 if others.isEmpty && otherFiles.isEmpty {
@@ -879,7 +880,7 @@ class DiskPaneViewModel: ObservableObject {
                     self.reportFailures("Some Files Could Not Be Unpacked", failures)
                 } else {
                     self.reportFailures("Some Files Could Not Be Unpacked", failures)
-                    self.importFiles(from: others, and: otherFiles)
+                    self.importFiles(from: others, and: otherFiles, into: folder)
                 }
             }
         case .open:
@@ -893,9 +894,9 @@ class DiskPaneViewModel: ObservableObject {
         importFiles(from: [url])
     }
     
-    /// Imports files from the Mac into the directory shown in this pane, one at a time.
-    /// `files` are items that were already read into memory (a drop without a file URL).
-    func importFiles(from urls: [URL], and files: [ImportedFile] = []) {
+    /// Imports files from the Mac into `folder` (default: the directory shown in this pane),
+    /// one at a time. `files` are items that were already read into memory (a drop without a file URL).
+    func importFiles(from urls: [URL], and files: [ImportedFile] = [], into folder: String? = nil) {
         var allFiles = files
         var failures: [String] = []
         
@@ -913,13 +914,13 @@ class DiskPaneViewModel: ObservableObject {
         guard catalog != nil, let imagePath = diskImagePath, !(allFiles.isEmpty && failures.isEmpty) else { return }
         guard canWrite("Import") else { return }
         
-        importNextFile(allFiles, index: 0, failures: failures) { failures in
+        importNextFile(allFiles, into: folder ?? currentDirectoryPath, index: 0, failures: failures) { failures in
             self.loadDiskImage(from: imagePath)
             self.reportFailures("Some Files Could Not Be Imported", failures)
         }
     }
     
-    private func importNextFile(_ files: [ImportedFile], index: Int, failures: [String], completion: @escaping ([String]) -> Void) {
+    private func importNextFile(_ files: [ImportedFile], into folder: String, index: Int, failures: [String], completion: @escaping ([String]) -> Void) {
         guard index < files.count else {
             completion(failures)
             return
@@ -928,8 +929,8 @@ class DiskPaneViewModel: ObservableObject {
         let file = files[index]
         let type = Self.importFileType(forExtension: (file.filename as NSString).pathExtension)
         
-        addImportedFile(file.data, filename: file.filename, fileType: type.fileType, auxType: type.auxType) { failure in
-            self.importNextFile(files, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
+        addImportedFile(file.data, filename: file.filename, fileType: type.fileType, auxType: type.auxType, into: folder) { failure in
+            self.importNextFile(files, into: folder, index: index + 1, failures: failures + (failure.map { [$0] } ?? []), completion: completion)
         }
     }
 
@@ -943,7 +944,7 @@ class DiskPaneViewModel: ObservableObject {
 
         guard canWrite("Import") else { return }
 
-        addImportedFile(data, filename: filename, fileType: fileType, auxType: auxType) { failure in
+        addImportedFile(data, filename: filename, fileType: fileType, auxType: auxType, into: currentDirectoryPath) { failure in
             if let failure = failure {
                 self.showError("Import Failed", failure)
             } else {
@@ -952,9 +953,10 @@ class DiskPaneViewModel: ObservableObject {
         }
     }
     
-    /// Writes one file into the directory shown in this pane.
+    /// Writes one file into `folder` (ignored on DOS 3.3, which has no folders).
     /// The completion receives a message if it failed, nil if it worked.
-    private func addImportedFile(_ data: Data, filename: String, fileType: UInt8, auxType: UInt16, completion: @escaping (String?) -> Void) {
+    private func addImportedFile(_ data: Data, filename: String, fileType: UInt8, auxType: UInt16, into folder: String,
+                                 completion: @escaping (String?) -> Void) {
         guard let imagePath = diskImagePath else { return }
 
         // Sanitize filename for ProDOS/DOS 3.3
@@ -992,20 +994,21 @@ class DiskPaneViewModel: ObservableObject {
                 fileData: data,
                 fileType: fileType,
                 auxType: auxType,
-                parentPath: currentDirectoryPath,
+                parentPath: folder,
                 completion: writerCompletion
             )
         }
     }
 
     /// Copies entries dragged from the other pane into the directory shown in this pane
-    func importEntries(_ entries: [DiskCatalogEntry], from sourceVM: DiskPaneViewModel) {
+    /// Copies entries from the other pane into `folder` (default: the directory shown in this pane)
+    func importEntries(_ entries: [DiskCatalogEntry], from sourceVM: DiskPaneViewModel, into folder: String? = nil) {
         guard let targetImagePath = diskImagePath,
               sourceVM.diskImagePath != nil else { return }
         
         guard canWrite("Copy Files") else { return }
         
-        copyEntries(topLevelEntries(entries), to: targetImagePath, parentPath: currentDirectoryPath) { _, failures in
+        copyEntries(topLevelEntries(entries), to: targetImagePath, parentPath: folder ?? currentDirectoryPath) { _, failures in
             self.loadDiskImage(from: targetImagePath)
             self.reportFailures("Some Items Could Not Be Copied", failures)
         }

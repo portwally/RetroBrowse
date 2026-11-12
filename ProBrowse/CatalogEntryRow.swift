@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CatalogEntryRow: View {
     let entry: DiskCatalogEntry
@@ -22,6 +23,7 @@ struct CatalogEntryRow: View {
     let onExport: ((DiskCatalogEntry) -> Void)?
     let onDelete: ((DiskCatalogEntry) -> Void)?
     let dragProvider: ((DiskCatalogEntry) -> NSItemProvider)?
+    let rowDrop: RowDrop?
     let level: Int
     /// Open/closed state of folders, kept by the pane's view model
     let isExpanded: (DiskCatalogEntry) -> Bool
@@ -34,7 +36,7 @@ struct CatalogEntryRow: View {
         Binding(get: { isExpanded(entry) }, set: { setExpanded(entry, $0) })
     }
 
-    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, level: Int, isExpanded: @escaping (DiskCatalogEntry) -> Bool, setExpanded: @escaping (DiskCatalogEntry, Bool) -> Void, sortEntries: @escaping ([DiskCatalogEntry]) -> [DiskCatalogEntry] = { $0 }, columnWidths: ColumnWidths) {
+    init(entry: DiskCatalogEntry, isSelected: @escaping (DiskCatalogEntry) -> Bool, onToggle: @escaping (DiskCatalogEntry, Bool, Bool) -> Void, onDoubleClick: ((DiskCatalogEntry) -> Void)? = nil, onRename: ((DiskCatalogEntry) -> Void)? = nil, onGetInfo: ((DiskCatalogEntry) -> Void)? = nil, onChangeFileType: ((DiskCatalogEntry) -> Void)? = nil, onInspect: ((DiskCatalogEntry) -> Void)? = nil, onCopy: ((DiskCatalogEntry) -> Void)? = nil, onCut: ((DiskCatalogEntry) -> Void)? = nil, onPaste: (() -> Void)? = nil, onExport: ((DiskCatalogEntry) -> Void)? = nil, onDelete: ((DiskCatalogEntry) -> Void)? = nil, dragProvider: ((DiskCatalogEntry) -> NSItemProvider)? = nil, rowDrop: RowDrop? = nil, level: Int, isExpanded: @escaping (DiskCatalogEntry) -> Bool, setExpanded: @escaping (DiskCatalogEntry, Bool) -> Void, sortEntries: @escaping ([DiskCatalogEntry]) -> [DiskCatalogEntry] = { $0 }, columnWidths: ColumnWidths) {
         self.entry = entry
         self.isSelected = isSelected
         self.onToggle = onToggle
@@ -49,6 +51,7 @@ struct CatalogEntryRow: View {
         self.onExport = onExport
         self.onDelete = onDelete
         self.dragProvider = dragProvider
+        self.rowDrop = rowDrop
         self.level = level
         self.isExpanded = isExpanded
         self.setExpanded = setExpanded
@@ -62,6 +65,7 @@ struct CatalogEntryRow: View {
             CatalogEntryRowContent(
                 entry: entry,
                 isSelected: isSelected(entry),
+                isDropTarget: entry.isDirectory && rowDrop?.highlightedFolder == entry.directoryPath,
                 isExpanded: expandedBinding,
                 level: level,
                 onToggle: onToggle,
@@ -82,6 +86,7 @@ struct CatalogEntryRow: View {
             .onDrag {
                 dragProvider?(entry) ?? NSItemProvider()
             }
+            .modifier(RowDropModifier(entry: entry, drop: rowDrop))
             
             // Children (if expanded)
             if isExpanded(entry), let children = entry.children, !children.isEmpty {
@@ -101,6 +106,7 @@ struct CatalogEntryRow: View {
                         onExport: onExport,
                         onDelete: onDelete,
                         dragProvider: dragProvider,
+                        rowDrop: rowDrop,
                         level: level + 1,
                         isExpanded: isExpanded,
                         setExpanded: setExpanded,
@@ -118,6 +124,8 @@ struct CatalogEntryRow: View {
 struct CatalogEntryRowContent: View {
     let entry: DiskCatalogEntry
     let isSelected: Bool
+    /// Files dragged over this folder would be copied into it
+    var isDropTarget = false
     @Binding var isExpanded: Bool
     let level: Int
     let onToggle: (DiskCatalogEntry, Bool, Bool) -> Void
@@ -145,6 +153,9 @@ struct CatalogEntryRowContent: View {
             ZStack(alignment: .leading) {
                 // Background
                 (isSelected ? skin.selectionBackground : Color.clear)
+                if isDropTarget {
+                    Color.accentColor.opacity(0.3)
+                }
                 
                 HStack(spacing: 0) {
                     // Name Column (with indentation and expand button)
@@ -335,5 +346,45 @@ struct CatalogEntryRowContent: View {
             
             onToggle(entry, commandPressed, shiftPressed)
         }
+    }
+}
+
+// MARK: - Dropping on a Row
+
+/// Dropping on a row: onto a folder copies into that folder, onto a file into the folder
+/// that holds it. The pane keeps which folder is highlighted while something is dragged over it.
+struct RowDrop {
+    let types: [UTType]
+    /// The folder under the pointer, e.g. "/GAMES/"
+    let highlightedFolder: String?
+    let enter: (String) -> Void
+    let exit: (String) -> Void
+    let perform: ([NSItemProvider], String) -> Bool
+}
+
+private struct RowDropModifier: ViewModifier {
+    let entry: DiskCatalogEntry
+    let drop: RowDrop?
+
+    func body(content: Content) -> some View {
+        if let drop = drop {
+            content.onDrop(of: drop.types, delegate: RowDropDelegate(folder: entry.isDirectory ? entry.directoryPath : entry.parentPath, drop: drop))
+        } else {
+            content
+        }
+    }
+}
+
+private struct RowDropDelegate: DropDelegate {
+    let folder: String
+    let drop: RowDrop
+
+    func dropEntered(info: DropInfo) { drop.enter(folder) }
+    func dropExited(info: DropInfo) { drop.exit(folder) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .copy) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        drop.exit(folder)
+        return drop.perform(info.itemProviders(for: drop.types), folder)
     }
 }

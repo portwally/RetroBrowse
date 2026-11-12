@@ -753,6 +753,20 @@ do {
     check(find(catalog(sourceURL), "/README") != nil, "copy leaves the source file in place")
     check(target.currentDirectoryPath == "/INBOX/", "the pane stays in its directory after the reload")
 
+    // Dropping on a folder row copies into that folder, not the one the pane shows
+    _ = wait { ProDOSWriter.shared.createDirectory(diskImagePath: targetURL, directoryName: "OUTBOX", parentPath: "/", completion: $0) }
+    target.loadDiskImage(from: targetURL)
+    target.importEntries([find(source.catalog, "/README")!], from: source, into: "/OUTBOX/")
+    pump { find(target.catalog, "/OUTBOX/README") != nil }
+    check(find(catalog(targetURL), "/OUTBOX/README")?.data == other, "entries dropped on a folder land in it")
+    let macFile = workDir.appendingPathComponent("notes.txt")
+    try! other.write(to: macFile)
+    target.importFiles(from: [macFile], into: "/OUTBOX/")
+    pump { find(target.catalog, "/OUTBOX/NOTES.TXT") != nil }
+    check(find(catalog(targetURL), "/OUTBOX/NOTES.TXT")?.data == other, "Mac files dropped on a folder land in it")
+    check(find(catalog(targetURL), "/INBOX/NOTES.TXT") == nil, "nothing goes to the folder the pane shows")
+    check(target.currentDirectoryPath == "/INBOX/", "the pane still shows its own folder")
+
     // A file that cannot be parsed must not replace the loaded disk
     let junkURL = workDir.appendingPathComponent("junk.po")
     try! bytes(4096, seed: 8).write(to: junkURL)

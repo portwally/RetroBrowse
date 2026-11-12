@@ -6,6 +6,7 @@ All notable changes to RetroBrowse will be documented in this file.
 
 ### Added
 - **Quick Look in the Finder** - Press Space on a disk image (.po .2mg .hdv .dsk .do .woz) or a ShrinkIt / Binary II archive to see its volume, format, size and every file with type, aux type, size and date
+- **Drop into folders** - Drop files on a folder to copy them into it, or on a file inside an open folder to copy them next to it; the folder lights up while you drag
 - **Finder icons** - Disk images show as a 5.25" or 3.5" floppy or a hard disk, archives as a box, labelled with the volume name and format or file count
 
 ## [1.9] - 2026-11-07
