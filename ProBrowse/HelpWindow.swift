@@ -121,6 +121,13 @@ struct OverviewHelpView: View {
                 HelpBullet("**Skins** - RetroBrowse > Settings: System, Light, Dark, Norton Commander or Apple IIGS 640")
             }
 
+            HelpSection("Quick Look in the Finder") {
+                HelpBullet("Select a disk image or archive in the Finder and press **Space**: the preview shows the volume name, format, size and every file with its type, aux type, size and date")
+                HelpBullet("Works for .po, .2mg, .hdv, .dsk, .do and .woz disks and for ShrinkIt and Binary II archives")
+                HelpBullet("In the Finder, disk images show as a 5.25\" or 3.5\" floppy or a hard disk, and archives as a box, labelled with the volume name")
+                HelpBullet("Open RetroBrowse once after installing or updating so the Finder finds the preview")
+            }
+
             HelpSection("Skin Fonts") {
                 HelpBullet("**Shaston 640** by Kreative Software (kreativekorp.com), used under the Kreative Software Relay Fonts Free Use License")
                 HelpBullet("**Modern DOS 9x16**, public domain (CC0)")
@@ -508,6 +515,12 @@ struct TroubleshootingHelpView: View {
                 HelpBullet("UCSD Pascal volumes are read-only")
                 HelpBullet("Gzip and ZIP archives are read-only")
                 HelpBullet("Check if disk image file is locked")
+            }
+
+            HelpSection("Finder Shows Another App's Preview") {
+                HelpBullet("Other emulators, such as Virtual ][, can bring their own Quick Look preview for the same disk images, and macOS then picks one of them")
+                HelpBullet("Open **System Settings**, search for **Quick Look** under Extensions, and turn off the other app's preview to use RetroBrowse's")
+                HelpBullet("Disks RetroBrowse can't read keep the Finder's normal icon")
             }
 
             HelpSection("File Type Not Recognized") {
