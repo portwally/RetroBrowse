@@ -514,3 +514,74 @@ All CRCs were good and the META chunk gives title, publisher, year etc. for free
   there is no DOS 3.2 catalog parser.
 - Follow-up: partly read disks show "N of M sectors read" in the pane header; a bad CRC
   opens with a warning; Disk Image Info shows the WOZ details, unread tracks and META.
+
+---
+
+# Plan: Quick Look in the Finder (2026-11-12, plan only)
+
+Goal: select an Apple II file in the Finder, press Space, and see what is inside. Optional
+second step: Finder icons (thumbnails) that show the content.
+
+## Findings
+
+- Parsers and decoders (DiskImageParser, NuFX, Binary II, WOZ, Pascal, Applesoft, SHR/HGR,
+  MOD) don't import SwiftUI/AppKit, so they can be compiled into the extension as they are.
+- The app declares no file types (generated Info.plist, no UTImportedTypeDeclarations).
+  On this Mac the types come from other apps:
+  - .po .dsk .do → `nl.xs4all.gp.virtualii.disk` (Virtual ][)
+  - .2mg → `nl.xs4all.gp.virtualii.harddisk2`; .hdv → `…harddisk1`
+  - .woz → claimed by Virtual ][ as `com.gerardputter.viicassettetape` / `…virtualiisnapshot`
+  - .2mg also → `appleii.disk-image-dsk` (CiderXPress)
+  Quick Look picks the extension by type, so it must list these names AND our own.
+- Without Virtual ][ installed the files get `dyn.…` types; that is what the app's own
+  imported declarations fix.
+
+## Which files get a preview
+
+| Priority | Files | Preview shows |
+|---|---|---|
+| 1 | Disk images: .po .2mg .2img .hdv .dsk .do | Volume name, format (ProDOS / DOS 3.3 / Pascal), size, free space, file list with type, size, date; folders expanded |
+| 1 | .woz | Same as above, plus WOZ META (title, publisher, year) and "N of M sectors read" |
+| 1 | Archives: .shk .sdk .bxy (ShrinkIt), .bny .bqy (Binary II) | File list with type, size and date; .sdk shows the disk inside |
+| 2 | Files exported by RetroBrowse: .bas (Applesoft listing), .pic/.shr/.pnt (SHR pictures), .fon (IIgs fonts), .mod (title and sample texts) | The same view as the app's inspector |
+| — | Not covered: .img (claimed by macOS disk images), .txt (macOS handles text), .zip/.gz (macOS handles them) | — |
+
+## Thumbnails (second extension, optional)
+
+- Disk images: a floppy or hard-disk symbol with the volume name.
+- SHR/HGR pictures: the picture itself.
+- Archives: an archive symbol with the file count.
+
+## Build steps
+
+- [ ] Declare imported types in the app (a small Info.plist merged with the generated one):
+      `com.portwally.retrobrowse.prodos-image` (.po), `.dos-image` (.do .dsk), `.2img`
+      (.2mg .2img), `.hdv`, `.woz`, `.shrinkit` (.shk .sdk .bxy), `.binary2` (.bny .bqy).
+      Imported, not exported, so we don't take the types away from Virtual ][.
+- [ ] New target "RetroBrowse Quick Look" (Quick Look Preview Extension), sandboxed, no extra
+      entitlements (it gets read access to the previewed file by default). Important after
+      the Downloads-entitlement question from App Review.
+- [ ] `QLSupportedContentTypes`: our types plus the Virtual ][ and CiderXPress types above.
+- [ ] Add the parser files to both targets (no new framework needed for now).
+- [ ] View-based preview (`QLPreviewingController`, SwiftUI view in an NSHostingView):
+      a header (name, format, size, free) and a file list. Read only, no editing.
+- [ ] Look at the magic bytes, not just the extension: a .dsk from another computer, or a
+      .woz that is a Virtual ][ snapshot, ends with "Not an Apple II disk image" instead of
+      a crash or a wrong list.
+- [ ] Limits: Quick Look gives extensions little memory and time. Hard disks up to 32 MB
+      are fine; parse the catalog only (no file contents) for disk images.
+- [ ] Priority 2: reuse the inspector decoders for exported .bas/.pic/.fon/.mod files.
+- [ ] Thumbnail extension (separate target), if wanted.
+
+## Testing
+
+- `qlmanage -p file` and `qlmanage -t file` for each type; `pluginkit -m -i …` to see that
+  the extension is registered (the app must have been launched once, from /Applications).
+- Real files: System.hdv, NEWDISK.po, a DOS 3.3 .dsk, 2400 A.D. .woz, IBMKLONE.SHK, a
+  Binary II file, a non-Apple .dsk.
+- Test with Virtual ][ installed (this Mac) and, if possible, on a Mac without it.
+
+## Questions before building
+
+1. Start with priority 1 only (disk images, WOZ, archives), or include exported files?
+2. Thumbnails too, or the Space-bar preview only?
