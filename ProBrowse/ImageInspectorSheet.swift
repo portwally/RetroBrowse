@@ -103,7 +103,7 @@ struct ImageInspectorSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 520, height: 600)
+        .sheetFrame(width: 520, height: 600)
     }
     
     private func verifyImage() {

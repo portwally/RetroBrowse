@@ -116,7 +116,7 @@ struct FileInspectorSheet: View {
             }
             .padding()
         }
-        .frame(width: 700, height: 800)
+        .sheetFrame(width: 700, height: 800)
     }
 
     // MARK: - Print Functionality

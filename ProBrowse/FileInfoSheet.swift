@@ -122,7 +122,7 @@ struct FileInfoSheet: View {
             }
             .padding()
         }
-        .frame(width: 500, height: 600)
+        .sheetFrame(width: 500, height: 600)
     }
     
     private var fileTypeDescription: String? {
