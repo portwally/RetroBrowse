@@ -100,7 +100,8 @@ struct DiskBrowserPane: View {
     
     // MARK: - Header View
 
-    /// "Label: value" pair in the header line. Only the file name may shorten; the rest keep their width.
+    /// "Label: value" pair in the header line. With `canShorten` the value may be cut short
+    /// (in the middle) when there is no room; otherwise it keeps its full width.
     private func headerItem(_ label: String, _ value: String?, canShorten: Bool = false) -> some View {
         HStack(spacing: 4) {
             Text(label)
@@ -114,67 +115,93 @@ struct DiskBrowserPane: View {
                 .truncationMode(.middle)
                 .fixedSize(horizontal: !canShorten, vertical: false)
         }
-        .layoutPriority(canShorten ? 0 : 1)
+    }
+
+    /// Volume, file system, size and a WOZ read warning
+    private func diskDetails(canShorten: Bool) -> some View {
+        HStack(spacing: 12) {
+            headerItem("Volume:", viewModel.catalog?.diskName, canShorten: canShorten)
+            headerItem("Filesystem:", viewModel.catalog?.diskFormat, canShorten: canShorten)
+            headerItem("Size:", viewModel.diskImageFileSize.map {
+                ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
+            })
+
+            // A WOZ disk whose tracks could not all be read (copy protection or damage)
+            if let woz = viewModel.wozImage, woz.sectorsDecoded < woz.sectorsExpected {
+                Label("\(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors read", systemImage: "exclamationmark.triangle")
+                    .font(skin.font(11))
+                    .foregroundColor(.orange)
+                    .fixedSize()
+                    .help("Some tracks could not be read, usually because of copy protection. Files stored there come out as zeros. Disk Image Info (⌥⌘I) lists the tracks.")
+            }
+        }
+    }
+
+    /// Back button and the folder being shown
+    private var folderNavigation: some View {
+        HStack(spacing: 8) {
+            Button(action: {
+                viewModel.navigateBack()
+            }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12))
+                    .foregroundColor(skin.folderText)
+            }
+            .buttonStyle(.plain)
+            .disabled(!viewModel.canGoBack && viewModel.currentDirectory == nil)
+            .opacity((viewModel.canGoBack || viewModel.currentDirectory != nil) ? 1.0 : 0.3)
+
+            if let currentDir = viewModel.currentDirectory {
+                Text("📂 \(currentDir.name)")
+                    .font(skin.font(11, weight: .medium))
+                    .foregroundColor(skin.folderText)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    /// The image's file name and the buttons that open or close every folder in this pane
+    private func filenameAndFolderButtons(canShorten: Bool) -> some View {
+        HStack(spacing: 12) {
+            headerItem("Filename:", viewModel.diskImagePath?.lastPathComponent, canShorten: canShorten)
+
+            HStack(spacing: 6) {
+                Button(action: { viewModel.expandAll() }) {
+                    Image(systemName: "chevron.down.square")
+                }
+                .help("Expand all folders")
+                Button(action: { viewModel.collapseAll() }) {
+                    Image(systemName: "chevron.right.square")
+                }
+                .help("Collapse all folders")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 14))
+            .foregroundColor(skin.folderText)
+            .disabled(viewModel.catalog == nil)
+            .opacity(viewModel.catalog == nil ? 0.3 : 1)
+        }
     }
 
     private var headerView: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                headerItem("Volume:", viewModel.catalog?.diskName)
-                headerItem("Filesystem:", viewModel.catalog?.diskFormat)
-                headerItem("Size:", viewModel.diskImageFileSize.map {
-                    ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
-                })
-
-                // A WOZ disk whose tracks could not all be read (copy protection or damage)
-                if let woz = viewModel.wozImage, woz.sectorsDecoded < woz.sectorsExpected {
-                    Label("\(woz.sectorsDecoded) of \(woz.sectorsExpected) sectors read", systemImage: "exclamationmark.triangle")
-                        .font(skin.font(11))
-                        .foregroundColor(.orange)
-                        .fixedSize()
-                        .help("Some tracks could not be read, usually because of copy protection. Files stored there come out as zeros. Disk Image Info (⌥⌘I) lists the tracks.")
+            // One line when everything fits; in a narrow pane two, so the file name stays in view
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    diskDetails(canShorten: false)
+                    folderNavigation
+                    Spacer(minLength: 12)
+                    filenameAndFolderButtons(canShorten: false)
                 }
-
-                // Back button and current path
-                HStack(spacing: 8) {
-                    Button(action: {
-                        viewModel.navigateBack()
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12))
-                            .foregroundColor(skin.folderText)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!viewModel.canGoBack && viewModel.currentDirectory == nil)
-                    .opacity((viewModel.canGoBack || viewModel.currentDirectory != nil) ? 1.0 : 0.3)
-
-                    if let currentDir = viewModel.currentDirectory {
-                        Text("📂 \(currentDir.name)")
-                            .font(skin.font(11, weight: .medium))
-                            .foregroundColor(skin.folderText)
+                VStack(alignment: .leading, spacing: 4) {
+                    diskDetails(canShorten: true)
+                    HStack(spacing: 12) {
+                        folderNavigation
+                        Spacer(minLength: 12)
+                        filenameAndFolderButtons(canShorten: true)
+                            .layoutPriority(1)
                     }
                 }
-
-                Spacer()
-
-                headerItem("Filename:", viewModel.diskImagePath?.lastPathComponent, canShorten: true)
-
-                // Open or close every folder in this pane
-                HStack(spacing: 6) {
-                    Button(action: { viewModel.expandAll() }) {
-                        Image(systemName: "chevron.down.square")
-                    }
-                    .help("Expand all folders")
-                    Button(action: { viewModel.collapseAll() }) {
-                        Image(systemName: "chevron.right.square")
-                    }
-                    .help("Collapse all folders")
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundColor(skin.folderText)
-                .disabled(viewModel.catalog == nil)
-                .opacity(viewModel.catalog == nil ? 0.3 : 1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

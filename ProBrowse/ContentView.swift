@@ -25,6 +25,8 @@ struct ContentView: View {
         var id: Self { self }
     }
     
+    static let minimumWidth: CGFloat = 1180
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -91,6 +93,9 @@ struct ContentView: View {
                 , alignment: .topLeading
             )
         }
+        // The window can't get narrower than the toolbar (two groups of seven buttons and
+        // Create Image); below that, both ends of the window were cut off
+        .frame(minWidth: Self.minimumWidth, minHeight: 520)
         .sheet(isPresented: $showingCreateImageSheet) {
             CreateImageSheet()
         }

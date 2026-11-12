@@ -33,6 +33,8 @@ struct ProBrowseApp: App {
         }
         // The main window always opens at launch, whatever was open when the app last quit
         .defaultLaunchBehavior(.presented)
+        // No smaller than the content's minimum size
+        .windowResizability(.contentMinSize)
         .commands {
             // RetroBrowse menu > Settings > skin choice
             CommandGroup(replacing: .appSettings) {
