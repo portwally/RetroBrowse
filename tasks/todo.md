@@ -585,3 +585,23 @@ second step: Finder icons (thumbnails) that show the content.
 
 1. Start with priority 1 only (disk images, WOZ, archives), or include exported files?
 2. Thumbnails too, or the Space-bar preview only?
+
+## Review (built 2026-11-12)
+
+- Disk loading moved out of the view model into `DiskImageLoader` (shared, no UI); the app
+  behaves as before, 410 checks pass.
+- New targets `QuickLookPreview` (data-based HTML preview) and `QuickLookThumbnail`
+  (drawn floppy / 3.5" / hard disk / archive icons), embedded in the app. Each has only the
+  sandbox entitlement. Versions, team and bundle ID prefix (`APP_BUNDLE_ID`) are set at
+  project level so all three targets match.
+- The app declares imported types for .po .dsk .do .2mg .2img .hdv .woz .shk .sdk .bxy
+  .bny .bqy .bii; the extensions also list the type names of Virtual ][, Applesauce,
+  CiderXPress, RetroArch and SubEthaEdit (.do). A .do that is not a disk previews as text.
+- Checked: thumbnails for .po .2mg .hdv .do .woz .shk .sdk through quicklookd; the
+  preview in the Finder for a ProDOS hard disk (dark mode). An unreadable disk
+  (Elevator Action) keeps the Finder's normal icon.
+- Open: on this Mac Virtual ][ has its own Quick Look preview for the same types and
+  macOS picks it. Users choose in System Settings › General › Login Items & Extensions ›
+  Quick Look. Thumbnails are not affected (Virtual ][ has none).
+- If the version is changed in Xcode's General tab, Xcode writes it on the app target only;
+  change it in the project's Build Settings instead so the extensions match.

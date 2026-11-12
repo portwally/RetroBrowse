@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>QLIsDataBasedPreview</key>
+			<true/>
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>portwally.retrobrowse.prodos-image</string>
+				<string>portwally.retrobrowse.dos-image</string>
+				<string>portwally.retrobrowse.2img</string>
+				<string>portwally.retrobrowse.hdv</string>
+				<string>portwally.retrobrowse.woz</string>
+				<string>portwally.retrobrowse.shrinkit</string>
+				<string>portwally.retrobrowse.binary-ii</string>
+				<string>nl.xs4all.gp.virtualii.disk</string>
+				<string>nl.xs4all.gp.virtualii.harddisk1</string>
+				<string>nl.xs4all.gp.virtualii.harddisk2</string>
+				<string>nl.xs4all.gp.virtualii.wozdisk</string>
+				<string>com.applesaucefdc.woz</string>
+				<string>com.virtualii.shrinkitarchive</string>
+				<string>appleii.disk-image-dos</string>
+				<string>appleii.disk-image-dsk</string>
+				<string>appleii.disk-image-harddisk</string>
+				<string>appleii.disk-image-prodos</string>
+				<string>appleii.disk-image-universal</string>
+				<string>com.retroarch.dsk</string>
+				<string>de.codingmonkeys.subethaedit.do-source</string>
+			</array>
+			<key>QLSupportsSearchableItems</key>
+			<false/>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.quicklook.preview</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).PreviewProvider</string>
+	</dict>
+</dict>
+</plist>

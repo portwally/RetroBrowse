@@ -233,3 +233,26 @@ enum DiskImageLoader {
         throw DiskLoadError(title: title, message: "No standard file system was found on \(name). This disk may be copy-protected. \(decoded)\(damaged)")
     }
 }
+
+// MARK: - Describing a disk
+
+extension LoadedDisk {
+    /// What the disk was, for drawing it: a 5.25" or 3.5" floppy, a hard disk or an archive of files
+    enum Medium { case floppy525, floppy35, hardDisk, archive }
+
+    var medium: Medium {
+        if catalog.isFileArchive { return .archive }
+        if let woz = woz { return woz.kind == .disk35 ? .floppy35 : .floppy525 }
+        switch catalog.diskSize {
+        case ...(200 * 1024): return .floppy525
+        case ...(1440 * 1024): return .floppy35
+        default: return .hardDisk
+        }
+    }
+
+    /// The volume name, or the file name without extension when the disk has none (DOS 3.3)
+    func displayName(filename: String) -> String {
+        let name = catalog.diskName
+        return name == filename && !catalog.isFileArchive ? (filename as NSString).deletingPathExtension : name
+    }
+}
