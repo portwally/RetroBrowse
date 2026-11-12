@@ -122,6 +122,18 @@ struct ContentView: View {
                 leftPaneVM.showingFilePicker = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openRecentPair)) { notification in
+            if let pair = notification.object as? RecentPair {
+                openRecent(pair)
+            }
+        }
+        // Each new disk in a pane makes a new combination for File > Open Recent
+        .onChange(of: leftPaneVM.diskImagePath) { _, path in
+            if path != nil { RecentPairs.shared.record(left: path, right: rightPaneVM.diskImagePath) }
+        }
+        .onChange(of: rightPaneVM.diskImagePath) { _, path in
+            if path != nil { RecentPairs.shared.record(left: leftPaneVM.diskImagePath, right: path) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showDiskImageInfo)) { _ in
             inspectorPane = FocusManager.shared.activePaneId == .left ? .left : .right
         }
@@ -166,6 +178,16 @@ struct ContentView: View {
                     return nil
                 }
 
+                // Return opens or closes the highlighted folder; right and left arrows open and close it
+                if modifiers.isEmpty && activeVM.catalog != nil {
+                    switch event.keyCode {
+                    case 36, 76: if activeVM.expandHighlightedFolder() { return nil }
+                    case 124: if activeVM.expandHighlightedFolder(true) { return nil }
+                    case 123: if activeVM.expandHighlightedFolder(false) { return nil }
+                    default: break
+                    }
+                }
+
                 // Space inspects the selected file, like the Inspect button (and Quick Look in Finder)
                 if modifiers.isEmpty && event.keyCode == 49 && activeVM.canInspect {
                     activeVM.inspectSelectedFile()
@@ -199,6 +221,19 @@ struct ContentView: View {
 extension ContentView {
     /// Turns a pane into a preview of the other pane's highlighted file, or back. Only one
     /// pane previews at a time, and the other one becomes the active pane.
+    /// Opens both disks of a recent combination, each in the pane it was in
+    private func openRecent(_ pair: RecentPair) {
+        for (disk, pane) in [(pair.left, leftPaneVM), (pair.right, rightPaneVM)] {
+            guard let disk = disk else { continue }
+            pane.isPreviewing = false
+            guard let url = RecentPairs.resolve(disk) else {
+                pane.presentError("Could Not Open \(disk.name)", "The disk image could not be found. It may have been moved to another disk or deleted.\n\n\(disk.path)")
+                continue
+            }
+            pane.loadDiskImage(from: url)
+        }
+    }
+
     fileprivate func togglePreview(_ pane: DiskPaneViewModel, other: DiskPaneViewModel) {
         pane.isPreviewing.toggle()
         if pane.isPreviewing {

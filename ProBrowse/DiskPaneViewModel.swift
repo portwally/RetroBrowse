@@ -570,6 +570,16 @@ class DiskPaneViewModel: ObservableObject {
         if expanded { expandedFolders.insert(entry.directoryPath) } else { expandedFolders.remove(entry.directoryPath) }
     }
 
+    /// Opens or closes the highlighted folder from the keyboard: Return toggles it (nil),
+    /// the right arrow opens it (true), the left arrow closes it (false).
+    /// Returns false when the highlighted row is not a folder, so the key keeps its usual meaning.
+    @discardableResult
+    func expandHighlightedFolder(_ expand: Bool? = nil) -> Bool {
+        guard let entry = lastSelectedEntry, entry.isDirectory, selectedEntries.contains(entry.id) else { return false }
+        setExpanded(entry, expand ?? !isExpanded(entry))
+        return true
+    }
+
     /// The rows on screen, top to bottom: the current directory's entries and the
     /// contents of every open folder below them
     var visibleEntries: [DiskCatalogEntry] {

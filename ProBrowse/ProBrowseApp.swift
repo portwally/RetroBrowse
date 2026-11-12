@@ -11,6 +11,7 @@ import SwiftUI
 struct ProBrowseApp: App {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(Skin.storageKey) private var skinName = Skin.system.rawValue
+    @ObservedObject private var recentPairs = RecentPairs.shared
 
     private var skin: Skin { Skin(rawValue: skinName) ?? .system }
 
@@ -66,6 +67,20 @@ struct ProBrowseApp: App {
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
 
+                // The last disk combinations of both panes; picking one opens both again
+                Menu("Open Recent") {
+                    ForEach(recentPairs.pairs) { pair in
+                        Button(pair.title) {
+                            NotificationCenter.default.post(name: .openRecentPair, object: pair)
+                        }
+                    }
+                    if !recentPairs.pairs.isEmpty {
+                        Divider()
+                    }
+                    Button("Clear Menu") { recentPairs.clear() }
+                        .disabled(recentPairs.pairs.isEmpty)
+                }
+
                 Divider()
 
                 Button("Disk Image Info...") {
@@ -112,4 +127,5 @@ extension NSNotification.Name {
     static let showHelp = NSNotification.Name("showHelp")
     static let showDiskImageInfo = NSNotification.Name("showDiskImageInfo")
     static let showWelcome = NSNotification.Name("showWelcome")
+    static let openRecentPair = NSNotification.Name("openRecentPair")
 }

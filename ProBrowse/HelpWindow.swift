@@ -110,6 +110,7 @@ struct OverviewHelpView: View {
                 HelpBullet("Right-click files for more options")
                 HelpBullet("Press **Cmd+I** to inspect file contents (BASIC, graphics, hex)")
                 HelpBullet("Export files to your Mac via context menu")
+                HelpBullet("**File > Open Recent** lists the last ten pairs of disks you had open; pick one to open both again, each in its own pane")
             }
 
             HelpSection("Interface") {
@@ -416,6 +417,8 @@ struct ShortcutsHelpView: View {
             HelpSection("Navigation") {
                 ShortcutRow(keys: "Space or Cmd + I", action: "Inspect File (Space again closes it)")
                 ShortcutRow(keys: "Up / Down", action: "Move the selection (with Shift: extend it)")
+                ShortcutRow(keys: "Return", action: "Open or close the highlighted folder")
+                ShortcutRow(keys: "Right / Left", action: "Open / close the highlighted folder")
                 ShortcutRow(keys: "Double-click", action: "Open directory")
                 ShortcutRow(keys: "Cmd + click", action: "Add to selection")
                 ShortcutRow(keys: "Shift + click", action: "Range selection")

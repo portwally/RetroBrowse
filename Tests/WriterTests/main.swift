@@ -1642,6 +1642,16 @@ do {
     pane.moveSelection(by: 1)
     check(pane.getSelectedEntries().map { $0.name } == ["FILE9"], "the arrow keys move in the sorted order")
 
+    // Return on a highlighted folder opens and closes it; on a file it does nothing
+    pane.setExpanded(find(pane.catalog, "/GAMES")!, false)
+    pane.toggleSelection(find(pane.catalog, "/GAMES")!, commandPressed: false, shiftPressed: false)
+    check(pane.expandHighlightedFolder() && pane.isExpanded(find(pane.catalog, "/GAMES")!), "Return opens the highlighted folder")
+    check(pane.expandHighlightedFolder() && !pane.isExpanded(find(pane.catalog, "/GAMES")!), "Return again closes it")
+    check(pane.expandHighlightedFolder(true) && pane.isExpanded(find(pane.catalog, "/GAMES")!), "the right arrow opens it")
+    check(pane.expandHighlightedFolder(false) && !pane.isExpanded(find(pane.catalog, "/GAMES")!), "the left arrow closes it")
+    pane.toggleSelection(find(pane.catalog, "/APPLE")!, commandPressed: false, shiftPressed: false)
+    check(!pane.expandHighlightedFolder(), "Return on a file is left alone")
+
     // Dates sort as dates, not as text
     let early = DiskCatalogEntry.dateFormatter.string(from: Date(timeIntervalSince1970: 86400 * 400))
     let late = DiskCatalogEntry.dateFormatter.string(from: Date(timeIntervalSince1970: 86400 * 20000))
@@ -1652,6 +1662,41 @@ do {
     pane.sort(by: .modified)
     let byDate = pane.sorted([dated("LATE", late), dated("NONE", nil), dated("EARLY", early)]).map { $0.name }
     check(byDate == ["NONE", "EARLY", "LATE"], "sorted by modification date, got \(byDate)")
+}
+
+// MARK: - Open Recent
+
+do {
+    let suite = "probrowse-tests-recent-\(ProcessInfo.processInfo.processIdentifier)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let elsewhere = URL(fileURLWithPath: "/nonexistent-folder")
+    let recent = RecentPairs(defaults: defaults, ignoring: elsewhere)
+    func disk(_ name: String) -> URL {
+        let url = workDir.appendingPathComponent(name)
+        try? Data([1]).write(to: url)
+        return url
+    }
+    let a = disk("A.po"), b = disk("B.po"), c = disk("C.po")
+
+    recent.record(left: a, right: nil)
+    recent.record(left: a, right: b)
+    check(recent.pairs.map { $0.title } == ["A.po  ↔  B.po"], "opening the second disk completes the entry, got \(recent.pairs.map { $0.title })")
+    recent.record(left: a, right: c)
+    recent.record(left: a, right: b)
+    check(recent.pairs.map { $0.title } == ["A.po  ↔  B.po", "A.po  ↔  C.po"], "a combination opened again moves to the top, got \(recent.pairs.map { $0.title })")
+    for i in 0..<12 { recent.record(left: disk("D\(i).po"), right: c) }
+    check(recent.pairs.count == RecentPairs.maximumCount, "at most ten combinations are kept")
+    check(RecentPairs(defaults: defaults, ignoring: elsewhere).pairs == recent.pairs, "the list survives a relaunch")
+    check(RecentPairs.resolve(recent.pairs[0].right!)?.resolvingSymlinksInPath().path == c.resolvingSymlinksInPath().path, "a recent disk opens again from its bookmark")
+    try? FileManager.default.removeItem(at: c)
+    check(RecentPairs.resolve(recent.pairs[0].right!) == nil, "a deleted disk is reported as missing")
+    let ignoring = RecentPairs(defaults: UserDefaults(suiteName: suite + "-tmp")!, ignoring: workDir)
+    ignoring.record(left: a, right: nil)
+    check(ignoring.pairs.isEmpty, "temporary copies are not remembered")
+    UserDefaults().removePersistentDomain(forName: suite + "-tmp")
+    recent.clear()
+    check(recent.pairs.isEmpty && RecentPairs(defaults: defaults, ignoring: elsewhere).pairs.isEmpty, "Clear Menu empties the list")
 }
 
 print("\(checkCount - failureCount) of \(checkCount) checks passed")
